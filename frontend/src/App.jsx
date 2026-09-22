@@ -30,24 +30,25 @@ export default function App() {
   }, []);
 
   // Check for standalone pages (Login, Signup, Admin Portal)
-  if (currentPath === '/login') {
+  const basePath = currentPath.split('?')[0];
+  if (basePath === '/login') {
     return <LoginPage onNavigate={navigate} />;
   }
-  if (currentPath === '/signup') {
+  if (basePath === '/signup') {
     return <SignupPage onNavigate={navigate} />;
   }
-  if (currentPath === '/admin') {
+  if (basePath === '/admin') {
     return <AdminPage onNavigate={navigate} />;
   }
 
   // Render main application with shared Header and Sidebar Layout
   const renderContent = () => {
-    switch (currentPath) {
+    switch (basePath) {
       case '/upload':
         return <UploadPage onNavigate={navigate} />;
       case '/results':
       case '/analyze':
-        return <ResultsPage onNavigate={navigate} />;
+        return <ResultsPage currentPath={currentPath} onNavigate={navigate} />;
       case '/reports':
         return <ReportsPage onNavigate={navigate} />;
       case '/history':

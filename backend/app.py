@@ -1206,6 +1206,20 @@ def create_analysis():
             created_at=datetime.utcnow()
         )
         db_session.add(analysis_result)
+
+        # Assign initial DoctorReview to doctor (so notification is created for assigned user)
+        doc_id = data.get('doctor_id') or data.get('doctorId') or data.get('user_id') or data.get('userId')
+        if not doc_id:
+            default_doc = db_session.query(User).first()
+            doc_id = default_doc.id if default_doc else 1
+        initial_review = DoctorReview(
+            analysis_id=analysis.id,
+            doctor_id=int(doc_id),
+            verified=False,
+            comments="AI analysis completed. Physician verification pending.",
+            reviewed_at=datetime.utcnow()
+        )
+        db_session.add(initial_review)
         db_session.commit()
 
         return jsonify({
@@ -1464,6 +1478,211 @@ def get_report_data(analysis_id=None):
     except Exception as e:
         return jsonify({"success": False, "message": "Failed to generate report", "error_type": type(e).__name__}), 500
 
+# ----------------- Notifications (Live Database-Backed) -----------------
+
+def format_relative_time(dt):
+    if not dt:
+        return "Recently"
+    now = datetime.utcnow()
+    diff = now - dt
+    seconds = int(diff.total_seconds())
+    if seconds < 0 or seconds < 60:
+        return "Just now"
+    minutes = seconds // 60
+    if minutes < 60:
+        return f"{minutes} min ago"
+    hours = minutes // 60
+    if hours < 24:
+        return f"{hours} hour{'s' if hours > 1 else ''} ago"
+    days = hours // 24
+    if days < 7:
+        return f"{days} day{'s' if days > 1 else ''} ago"
+    return dt.strftime("%d %b %Y")
+
+@app.route('/api/notifications', methods=['GET'])
+def get_user_notifications():
+    """
+    Returns actual notifications for the authenticated / requested user
+    based on PostgreSQL analyses and doctor_reviews tasks.
+    """
+    try:
+        user_id = request.args.get('user_id') or request.args.get('userId') or request.args.get('id')
+        email = request.args.get('email', '').strip().lower()
+
+        user = None
+        if user_id:
+            try:
+                user = db_session.query(User).filter_by(id=int(user_id)).first()
+            except (ValueError, TypeError):
+                pass
+        if not user and email:
+            user = db_session.query(User).filter_by(email=email).first()
+        if not user:
+            user = db_session.query(User).first()
+
+        if not user:
+            return jsonify({
+                "success": True,
+                "notifications": [],
+                "unread_count": 0
+            }), 200
+
+        # Query reviews assigned strictly to this user
+        user_reviews = db_session.query(DoctorReview).filter_by(doctor_id=user.id).all()
+        review_map = {r.analysis_id: r for r in user_reviews}
+        assigned_analysis_ids = set(review_map.keys())
+
+        if not assigned_analysis_ids:
+            return jsonify({
+                "success": True,
+                "user_id": user.id,
+                "user_name": user.name,
+                "notifications": [],
+                "total_count": 0,
+                "unread_count": 0
+            }), 200
+
+        analyses = (
+            db_session.query(Analysis)
+            .filter(Analysis.id.in_(assigned_analysis_ids))
+            .order_by(Analysis.analysis_date.desc())
+            .all()
+        )
+
+        notifications = []
+        for an in analyses:
+            patient = db_session.query(Patient).filter_by(id=an.patient_id).first()
+            result = db_session.query(AnalysisResult).filter_by(analysis_id=an.id).first()
+            review = review_map.get(an.id)
+
+            p_code = patient.patient_id if patient else f"PAT-{an.id:04d}"
+            vessel = result.affected_vessel if result and result.affected_vessel else "Coronary Vessel"
+            severity_num = int(result.severity) if result and result.severity is not None else 68
+
+            # Case: Failed analysis
+            if an.status == 'failed':
+                notifications.append({
+                    "id": f"notif-task-{an.id}-fail",
+                    "taskId": an.id,
+                    "task_id": an.id,
+                    "analysis_id": an.id,
+                    "patient_id": p_code,
+                    "type": "analysis_failed",
+                    "title": "Analysis Failed",
+                    "message": f"The angiogram for {p_code} could not be processed. Please try again.",
+                    "time": format_relative_time(an.analysis_date),
+                    "created_at": an.analysis_date.isoformat() if an.analysis_date else None,
+                    "status": "failed",
+                    "read": False
+                })
+                continue
+
+            # Case: Review Required (task is pending doctor verification)
+            if not review or not review.verified:
+                notifications.append({
+                    "id": f"notif-task-{an.id}-review",
+                    "taskId": an.id,
+                    "task_id": an.id,
+                    "analysis_id": an.id,
+                    "patient_id": p_code,
+                    "type": "review_required",
+                    "title": "Review Required",
+                    "message": f"Suspicious narrowing detected in {p_code} ({vessel}, {severity_num}% stenosis). Doctor verification is pending.",
+                    "time": format_relative_time(an.analysis_date),
+                    "created_at": an.analysis_date.isoformat() if an.analysis_date else None,
+                    "status": "pending_verification",
+                    "read": False
+                })
+                # Also include analysis complete notification for pending analysis
+                notifications.append({
+                    "id": f"notif-task-{an.id}-complete",
+                    "taskId": an.id,
+                    "task_id": an.id,
+                    "analysis_id": an.id,
+                    "patient_id": p_code,
+                    "type": "analysis_complete",
+                    "title": "Analysis Complete",
+                    "message": f"Angiogram analysis for {p_code} ({vessel}) has been completed.",
+                    "time": format_relative_time(an.analysis_date),
+                    "created_at": an.analysis_date.isoformat() if an.analysis_date else None,
+                    "status": "completed",
+                    "read": False
+                })
+            else:
+                # Case: Verification Completed
+                comments_suffix = f" {review.comments}" if review.comments else ""
+                notifications.append({
+                    "id": f"notif-task-{an.id}-verified",
+                    "taskId": an.id,
+                    "task_id": an.id,
+                    "analysis_id": an.id,
+                    "patient_id": p_code,
+                    "type": "verification_completed",
+                    "title": "Verification Completed",
+                    "message": f"Doctor review recorded for {p_code} ({vessel}).{comments_suffix}",
+                    "time": format_relative_time(review.reviewed_at or an.analysis_date),
+                    "created_at": (review.reviewed_at or an.analysis_date).isoformat() if (review.reviewed_at or an.analysis_date) else None,
+                    "status": "verified",
+                    "read": True
+                })
+
+                # Case: Report Ready
+                notifications.append({
+                    "id": f"notif-task-{an.id}-report",
+                    "taskId": an.id,
+                    "task_id": an.id,
+                    "analysis_id": an.id,
+                    "patient_id": p_code,
+                    "type": "report_ready",
+                    "title": "Report Ready",
+                    "message": f"The analysis report for {p_code} ({vessel}, {severity_num}% stenosis) is ready to view.",
+                    "time": format_relative_time(an.analysis_date),
+                    "created_at": an.analysis_date.isoformat() if an.analysis_date else None,
+                    "status": "report_ready",
+                    "read": False
+                })
+
+        # Sort notifications by creation time descending
+        notifications.sort(key=lambda n: n.get("created_at") or "", reverse=True)
+
+        return jsonify({
+            "success": True,
+            "user_id": user.id,
+            "user_name": user.name,
+            "notifications": notifications,
+            "total_count": len(notifications),
+            "unread_count": sum(1 for n in notifications if not n.get("read"))
+        }), 200
+    except Exception as e:
+        return jsonify({
+            "success": False,
+            "message": "Failed to fetch notifications",
+            "error_type": type(e).__name__
+        }), 500
+
+@app.route('/api/notifications/mark-read', methods=['POST'])
+def mark_notification_read():
+    try:
+        data = request.get_json() or {}
+        notif_id = data.get('notification_id') or data.get('id')
+        return jsonify({
+            "success": True,
+            "message": "Notification marked as read",
+            "notification_id": notif_id
+        }), 200
+    except Exception as e:
+        return jsonify({"success": False, "message": str(e)}), 500
+
+@app.route('/api/notifications/mark-all-read', methods=['POST'])
+def mark_all_notifications_read():
+    try:
+        return jsonify({
+            "success": True,
+            "message": "All notifications marked as read"
+        }), 200
+    except Exception as e:
+        return jsonify({"success": False, "message": str(e)}), 500
+
 # ----------------- Database Auto-Schema & Seeding -----------------
 
 def init_db_and_seed():
@@ -1644,7 +1863,7 @@ def init_db_and_seed():
                     "region": "Distal Left Circumflex branch",
                     "file_name": "patient_003_angio.dcm",
                     "verified": False,
-                    "doctor_idx": 2,
+                    "doctor_idx": 0,
                     "comments": "Mild non-obstructive CAD. Medical management indicated."
                 },
                 {
@@ -1818,4 +2037,4 @@ except Exception as e:
 
 if __name__ == '__main__':
     debug_mode = FLASK_ENV == 'development'
-    app.run(host='0.0.0.0', port=5000, debug=debug_mode)
+    app.run(host='0.0.0.0', port=5000, debug=debug_mode, use_reloader=False)

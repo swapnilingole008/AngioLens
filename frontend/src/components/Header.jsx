@@ -1,18 +1,74 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Search, Bell, ChevronDown, User, LogOut, ShieldCheck } from 'lucide-react';
+import { Search, Bell, ChevronDown, User, LogOut, ShieldCheck, CheckCircle2 } from 'lucide-react';
 import drSharmaImg from '../assets/images/dr-sharma.jpg';
 import api from '../api';
+import { NOTIFICATION_TYPES } from '../data/notificationsData';
 
 export default function Header({ currentPath, onNavigate }) {
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const dropdownRef = useRef(null);
 
   const user = api.getCurrentUser();
+  const userId = user?.id || 1;
   const userName = user?.name || 'Dr. Priya Sharma';
   const userRole = user?.role || 'Cardiologist';
   const userEmail = user?.email || 'dr.sharma@centralhospital.org';
 
-  // Handle clicking outside to close dropdown
+  // Read notification IDs stored in localStorage per user
+  const getReadNotificationIds = () => {
+    try {
+      const saved = localStorage.getItem(`angiolens_read_notifications_${userId}`);
+      return saved ? JSON.parse(saved) : [];
+    } catch {
+      return [];
+    }
+  };
+
+  const saveReadNotificationIds = (ids) => {
+    try {
+      localStorage.setItem(`angiolens_read_notifications_${userId}`, JSON.stringify(ids));
+    } catch {}
+  };
+
+  // Notification dropdown state & items from live database
+  const [notificationOpen, setNotificationOpen] = useState(false);
+  const [notifications, setNotifications] = useState([]);
+  const [showPast, setShowPast] = useState(false);
+  const notificationRef = useRef(null);
+
+  // Fetch actual database notifications for the logged-in user
+  const fetchNotifications = async () => {
+    try {
+      const res = await api.getNotifications(userId);
+      if (res?.success && Array.isArray(res.notifications)) {
+        const readIds = new Set(getReadNotificationIds());
+        const mapped = res.notifications.map(n => ({
+          ...n,
+          read: readIds.has(n.id) || !!n.read,
+        }));
+        setNotifications(mapped);
+      }
+    } catch (err) {
+      console.error('Failed to load notifications from database:', err);
+    }
+  };
+
+  useEffect(() => {
+    fetchNotifications();
+  }, [userId]);
+
+  // Refresh notifications when open, reset showPast when closed
+  useEffect(() => {
+    if (notificationOpen) {
+      fetchNotifications();
+    } else {
+      setShowPast(false);
+    }
+  }, [notificationOpen]);
+
+  const unreadCount = notifications.filter(n => !n.read).length;
+
+  // Handle clicking outside to close profile dropdown
   useEffect(() => {
     function handleClickOutside(event) {
       if (dropdownRef.current && !dropdownRef.current.contains(event.target)) {
@@ -22,6 +78,63 @@ export default function Header({ currentPath, onNavigate }) {
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
+
+  // Handle clicking outside to close notification dropdown panel
+  useEffect(() => {
+    function handleClickOutside(event) {
+      if (notificationRef.current && !notificationRef.current.contains(event.target)) {
+        setNotificationOpen(false);
+        setShowPast(false);
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  const toggleNotificationDropdown = () => {
+    setNotificationOpen(prev => {
+      const next = !prev;
+      if (next) setDropdownOpen(false);
+      setShowPast(false);
+      return next;
+    });
+  };
+
+  const handleMarkAsRead = (id, e) => {
+    if (e) e.stopPropagation();
+    const currentReadIds = getReadNotificationIds();
+    if (!currentReadIds.includes(id)) {
+      const updated = [...currentReadIds, id];
+      saveReadNotificationIds(updated);
+    }
+    setNotifications(prev =>
+      prev.map(item => item.id === id ? { ...item, read: true } : item)
+    );
+    api.markNotificationRead(id);
+  };
+
+  const handleMarkAllAsRead = (e) => {
+    if (e) e.stopPropagation();
+    const allIds = notifications.map(n => n.id);
+    saveReadNotificationIds(allIds);
+    setNotifications(prev =>
+      prev.map(item => ({ ...item, read: true }))
+    );
+    api.markAllNotificationsRead(userId);
+  };
+
+  const handleNotificationClick = (item, e) => {
+    if (e) e.stopPropagation();
+    handleMarkAsRead(item.id);
+    setNotificationOpen(false);
+    setShowPast(false);
+
+    const taskId = item.taskId || item.task_id || item.analysis_id;
+    if (taskId) {
+      api.setCurrentAnalysisId(taskId);
+      onNavigate(`/results?id=${taskId}`);
+    }
+  };
 
   // Search bar state & database
   const [searchQuery, setSearchQuery] = useState('');
@@ -172,15 +285,119 @@ export default function Header({ currentPath, onNavigate }) {
 
       {/* Right User Profile & Notifications with Dropdown */}
       <div className="header-actions">
-        <button className="notification-btn" aria-label="Notifications">
-          <Bell size={20} />
-          <span className="notification-badge"></span>
-        </button>
+        {/* Notification Bell & Dropdown Panel */}
+        <div className="notification-dropdown-container" ref={notificationRef}>
+          <button 
+            className={`notification-btn ${notificationOpen ? 'active' : ''}`} 
+            aria-label="Notifications"
+            onClick={toggleNotificationDropdown}
+            aria-expanded={notificationOpen}
+            aria-haspopup="true"
+          >
+            <Bell size={20} />
+            {unreadCount > 0 && (
+              <span className="notification-badge">
+                {unreadCount > 9 ? '9+' : unreadCount}
+              </span>
+            )}
+          </button>
+
+          {/* Floating Notification Panel */}
+          {notificationOpen && (
+            <div className="notification-dropdown-panel" role="region" aria-label="Notifications panel">
+              <div className="notification-panel-header">
+                <div className="notification-header-left">
+                  <span className="notification-header-title">Notifications</span>
+                  {unreadCount > 0 && (
+                    <span className="notification-unread-count-pill">{unreadCount}</span>
+                  )}
+                </div>
+                <button 
+                  className="mark-all-read-btn" 
+                  onClick={handleMarkAllAsRead}
+                  disabled={unreadCount === 0}
+                  aria-label="Mark all notifications as read"
+                >
+                  Mark all as read
+                </button>
+              </div>
+
+              {unreadCount === 0 && !showPast ? (
+                <div className="notification-empty-state">
+                  <div className="empty-icon-circle">
+                    <CheckCircle2 size={24} />
+                  </div>
+                  <p className="empty-state-title">No new notifications</p>
+                  <p className="empty-state-sub">You're all caught up with your clinical reviews.</p>
+                  {notifications.length > 0 && (
+                    <button 
+                      className="view-past-toggle-btn"
+                      onClick={() => setShowPast(true)}
+                    >
+                      View past notifications ({notifications.length})
+                    </button>
+                  )}
+                </div>
+              ) : (
+                <div className="notification-list-container">
+                  {unreadCount === 0 && showPast && (
+                    <div className="past-notifications-bar">
+                      <span>Past Notifications</span>
+                      <button 
+                        className="hide-past-toggle-btn"
+                        onClick={() => setShowPast(false)}
+                      >
+                        Hide
+                      </button>
+                    </div>
+                  )}
+                  <div className="notification-items-list">
+                    {notifications.map((item) => {
+                      const meta = NOTIFICATION_TYPES[item.type] || {};
+                      const isUnread = !item.read;
+
+                      return (
+                        <div
+                          key={item.id}
+                          className={`notification-item ${isUnread ? 'unread' : 'read'}`}
+                          onClick={(e) => handleNotificationClick(item, e)}
+                          role="button"
+                          tabIndex={0}
+                          aria-label={`${item.title} - ${isUnread ? 'Unread' : 'Read'}`}
+                        >
+                          <span 
+                            className="notification-type-dot"
+                            style={{ backgroundColor: meta.dotColor || '#94A3B8' }}
+                            title={meta.label || item.title}
+                          />
+                          <div className="notification-item-content">
+                            <div className="notification-item-header">
+                              <span className="notification-item-title">{item.title}</span>
+                              {isUnread && <span className="notification-unread-indicator" title="Unread notification" />}
+                            </div>
+                            <p className="notification-item-message">{item.message}</p>
+                            <span className="notification-item-time">{item.time}</span>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
 
         <div className="user-profile-dropdown-container" ref={dropdownRef}>
           <div 
             className={`user-profile-menu ${dropdownOpen ? 'open' : ''}`} 
-            onClick={() => setDropdownOpen(!dropdownOpen)} 
+            onClick={() => {
+              setDropdownOpen(!dropdownOpen);
+              if (!dropdownOpen) {
+                setNotificationOpen(false);
+                setShowPast(false);
+              }
+            }} 
             role="button" 
             tabIndex={0}
             aria-expanded={dropdownOpen}
@@ -490,6 +707,13 @@ export default function Header({ currentPath, onNavigate }) {
           gap: 20px;
         }
 
+        /* Notifications Dropdown & Badge */
+        .notification-dropdown-container {
+          position: relative;
+          display: flex;
+          align-items: center;
+        }
+
         .notification-btn {
           position: relative;
           background: transparent;
@@ -504,20 +728,296 @@ export default function Header({ currentPath, onNavigate }) {
           transition: all 0.2s;
         }
 
-        .notification-btn:hover {
+        .notification-btn:hover,
+        .notification-btn.active {
           background-color: var(--pink-surface);
           color: var(--burgundy-primary);
         }
 
         .notification-badge {
           position: absolute;
-          top: 7px;
-          right: 7px;
-          width: 8px;
-          height: 8px;
+          top: 2px;
+          right: 2px;
+          min-width: 17px;
+          height: 17px;
+          padding: 0 4px;
+          font-size: 10px;
+          font-weight: 700;
+          line-height: 13px;
+          color: #FFFFFF;
           background-color: var(--burgundy-primary);
-          border-radius: 50%;
+          border-radius: var(--radius-pill);
           border: 2px solid #FFFFFF;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          box-shadow: 0 1px 3px rgba(133, 16, 54, 0.3);
+        }
+
+        .notification-dropdown-panel {
+          position: absolute;
+          top: calc(100% + 10px);
+          right: -80px;
+          width: 350px;
+          background-color: #FFFFFF;
+          border: 1px solid var(--burgundy-border);
+          border-radius: var(--radius-md);
+          box-shadow: 0 10px 30px -4px rgba(133, 16, 54, 0.18), 0 4px 12px rgba(0, 0, 0, 0.05);
+          overflow: hidden;
+          z-index: 100;
+          animation: dropDownFade 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+        }
+
+        .notification-panel-header {
+          padding: 12px 16px;
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          background: linear-gradient(135deg, #FFF6F8 0%, #FAF1F3 100%);
+          border-bottom: 1px solid var(--burgundy-border-subtle);
+        }
+
+        .notification-header-left {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+        }
+
+        .notification-header-title {
+          font-size: 14px;
+          font-weight: 700;
+          color: var(--text-main);
+        }
+
+        .notification-unread-count-pill {
+          font-size: 10.5px;
+          font-weight: 700;
+          color: #FFFFFF;
+          background-color: var(--burgundy-primary);
+          padding: 1px 6px;
+          border-radius: var(--radius-pill);
+          line-height: 14px;
+        }
+
+        .mark-all-read-btn {
+          background: transparent;
+          border: none;
+          font-size: 12px;
+          font-weight: 600;
+          color: var(--burgundy-primary);
+          cursor: pointer;
+          padding: 4px 6px;
+          border-radius: 4px;
+          font-family: inherit;
+          transition: all 0.15s ease;
+        }
+
+        .mark-all-read-btn:hover:not(:disabled) {
+          background-color: var(--pink-surface);
+          text-decoration: underline;
+        }
+
+        .mark-all-read-btn:disabled {
+          color: var(--text-light);
+          cursor: default;
+          text-decoration: none;
+          opacity: 0.6;
+        }
+
+        .notification-list-container {
+          max-height: 380px;
+          overflow-y: auto;
+        }
+
+        .past-notifications-bar {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          padding: 6px 16px;
+          background-color: #FAF2F4;
+          font-size: 11px;
+          font-weight: 600;
+          color: var(--text-muted);
+          border-bottom: 1px solid #F6DCE3;
+        }
+
+        .hide-past-toggle-btn {
+          background: none;
+          border: none;
+          font-size: 11px;
+          font-weight: 600;
+          color: var(--burgundy-primary);
+          cursor: pointer;
+        }
+
+        .hide-past-toggle-btn:hover {
+          text-decoration: underline;
+        }
+
+        .notification-items-list {
+          display: flex;
+          flex-direction: column;
+        }
+
+        .notification-item {
+          display: flex;
+          align-items: flex-start;
+          gap: 12px;
+          padding: 12px 16px;
+          border: none;
+          background-color: #FFFFFF;
+          border-bottom: 1px solid #FDF0F3;
+          cursor: pointer;
+          text-align: left;
+          width: 100%;
+          font-family: inherit;
+          transition: background-color 0.15s ease;
+          user-select: none;
+        }
+
+        .notification-item:last-child {
+          border-bottom: none;
+        }
+
+        .notification-item:hover {
+          background-color: var(--pink-surface);
+        }
+
+        .notification-item.unread {
+          background-color: #FFF8FA;
+        }
+
+        .notification-item.unread:hover {
+          background-color: #FCEEF2;
+        }
+
+        .notification-type-dot {
+          width: 10px;
+          height: 10px;
+          border-radius: 50%;
+          margin-top: 4px;
+          flex-shrink: 0;
+          box-shadow: 0 0 0 2.5px rgba(0, 0, 0, 0.04);
+        }
+
+        .notification-item.read .notification-type-dot {
+          opacity: 0.7;
+        }
+
+        .notification-item-content {
+          display: flex;
+          flex-direction: column;
+          gap: 2px;
+          flex: 1;
+          min-width: 0;
+        }
+
+        .notification-item-header {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 8px;
+        }
+
+        .notification-item-title {
+          font-size: 13px;
+          font-weight: 700;
+          color: var(--text-main);
+          line-height: 1.3;
+        }
+
+        .notification-item.read .notification-item-title {
+          font-weight: 600;
+          color: var(--text-secondary);
+        }
+
+        .notification-unread-indicator {
+          width: 7px;
+          height: 7px;
+          border-radius: 50%;
+          background-color: var(--burgundy-primary);
+          flex-shrink: 0;
+        }
+
+        .notification-item-message {
+          font-size: 12px;
+          color: var(--text-secondary);
+          line-height: 1.35;
+          margin: 0;
+        }
+
+        .notification-item.read .notification-item-message {
+          color: var(--text-muted);
+        }
+
+        .notification-item-time {
+          font-size: 11px;
+          color: var(--text-muted);
+          margin-top: 2px;
+        }
+
+        .notification-empty-state {
+          padding: 30px 20px;
+          text-align: center;
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          gap: 6px;
+        }
+
+        .empty-icon-circle {
+          width: 44px;
+          height: 44px;
+          border-radius: 50%;
+          background-color: var(--pink-surface);
+          color: var(--burgundy-primary);
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          margin-bottom: 4px;
+        }
+
+        .empty-state-title {
+          font-size: 14px;
+          font-weight: 700;
+          color: var(--text-main);
+          margin: 0;
+        }
+
+        .empty-state-sub {
+          font-size: 12px;
+          color: var(--text-muted);
+          margin: 0;
+          max-width: 240px;
+          line-height: 1.35;
+        }
+
+        .view-past-toggle-btn {
+          margin-top: 10px;
+          background-color: #FFFFFF;
+          border: 1px solid var(--burgundy-border);
+          color: var(--burgundy-primary);
+          font-size: 11.5px;
+          font-weight: 600;
+          padding: 6px 12px;
+          border-radius: var(--radius-sm);
+          cursor: pointer;
+          font-family: inherit;
+          transition: all 0.15s ease;
+        }
+
+        .view-past-toggle-btn:hover {
+          background-color: var(--pink-surface);
+        }
+
+        @media (max-width: 600px) {
+          .notification-dropdown-panel {
+            position: fixed;
+            top: calc(var(--header-height) + 6px);
+            left: 12px;
+            right: 12px;
+            width: auto;
+          }
         }
 
         /* Profile Menu & Dropdown */

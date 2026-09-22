@@ -171,6 +171,30 @@ export const api = {
     return request('/reports/latest');
   },
 
+  // Notifications (Live Database-Backed)
+  getNotifications: (userId) => {
+    const user = api.getCurrentUser();
+    const uid = userId || user?.id;
+    const query = uid ? `?user_id=${uid}` : '';
+    return request(`/notifications${query}`);
+  },
+
+  markNotificationRead: (notificationId) => {
+    return request('/notifications/mark-read', {
+      method: 'POST',
+      body: JSON.stringify({ notification_id: notificationId }),
+    }).catch(() => ({}));
+  },
+
+  markAllNotificationsRead: (userId) => {
+    const user = api.getCurrentUser();
+    const uid = userId || user?.id;
+    return request('/notifications/mark-all-read', {
+      method: 'POST',
+      body: JSON.stringify({ user_id: uid }),
+    }).catch(() => ({}));
+  },
+
   initDb: () => request('/init-db'),
 
   // Doctor Application & Verification

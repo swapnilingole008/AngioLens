@@ -12,7 +12,7 @@ import {
 import AngiogramViewer from '../components/AngiogramViewer';
 import api from '../api';
 
-export default function ResultsPage({ onNavigate }) {
+export default function ResultsPage({ currentPath, onNavigate }) {
   const [activeTab, setActiveTab] = useState('segmented');
   const [verified, setVerified] = useState(false);
   const [analysisData, setAnalysisData] = useState(null);
@@ -20,7 +20,12 @@ export default function ResultsPage({ onNavigate }) {
   useEffect(() => {
     const loadAnalysis = async () => {
       try {
-        const id = api.getCurrentAnalysisId();
+        const params = new URLSearchParams(window.location.search);
+        const urlId = params.get('id') || params.get('taskId') || params.get('analysis_id');
+        const id = urlId || api.getCurrentAnalysisId();
+        if (urlId) {
+          api.setCurrentAnalysisId(urlId);
+        }
         const res = await api.getAnalysis(id);
         if (res?.data) {
           setAnalysisData(res.data);
@@ -33,7 +38,7 @@ export default function ResultsPage({ onNavigate }) {
       }
     };
     loadAnalysis();
-  }, []);
+  }, [currentPath]);
 
   const handleToggleVerify = async () => {
     const nextState = !verified;
