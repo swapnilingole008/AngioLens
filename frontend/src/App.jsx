@@ -9,6 +9,7 @@ import ResourcesPage from './pages/ResourcesPage';
 import ProfilePage from './pages/ProfilePage';
 import LoginPage from './pages/LoginPage';
 import SignupPage from './pages/SignupPage';
+import AdminPage from './pages/AdminPage';
 
 export default function App() {
   // Simple client-side routing state matching browser history or URL hash
@@ -28,12 +29,15 @@ export default function App() {
     return () => window.removeEventListener('popstate', handlePopState);
   }, []);
 
-  // Check for standalone pages (Login, Signup)
+  // Check for standalone pages (Login, Signup, Admin Portal)
   if (currentPath === '/login') {
     return <LoginPage onNavigate={navigate} />;
   }
   if (currentPath === '/signup') {
     return <SignupPage onNavigate={navigate} />;
+  }
+  if (currentPath === '/admin') {
+    return <AdminPage onNavigate={navigate} />;
   }
 
   // Render main application with shared Header and Sidebar Layout

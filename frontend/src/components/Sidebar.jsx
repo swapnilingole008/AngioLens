@@ -1,43 +1,75 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   Home, 
   Upload, 
-  Stethoscope, 
   BarChart2, 
   FileText, 
-  Clock, 
   BookOpen, 
-  User 
+  Clock,
+  ChevronLeft,
+  ChevronRight,
+  Menu
 } from 'lucide-react';
 import heartImg from '../assets/images/heart-illustration.png';
 
-export default function Sidebar({ currentPath, onNavigate }) {
+export default function Sidebar({ currentPath, onNavigate, collapsed, onToggleCollapse }) {
+  // Local state fallback if not controlled from parent
+  const [isCollapsed, setIsCollapsed] = useState(() => {
+    try {
+      return localStorage.getItem('angiolens_sidebar_collapsed') === 'true';
+    } catch {
+      return false;
+    }
+  });
+
+  const activeCollapsed = collapsed !== undefined ? collapsed : isCollapsed;
+
+  const handleToggle = () => {
+    const next = !activeCollapsed;
+    setIsCollapsed(next);
+    try {
+      localStorage.setItem('angiolens_sidebar_collapsed', String(next));
+    } catch {}
+    if (onToggleCollapse) {
+      onToggleCollapse(next);
+    }
+  };
+
   const navItems = [
     { path: '/', label: 'Home', icon: Home },
     { path: '/upload', label: 'Upload', icon: Upload },
-    { path: '/results', label: 'Analyze', icon: Stethoscope },
     { path: '/results', label: 'Results', icon: BarChart2 },
     { path: '/reports', label: 'Reports', icon: FileText },
-    { path: '/history', label: 'History', icon: Clock },
     { path: '/resources', label: 'Resources', icon: BookOpen },
-    { path: '/profile', label: 'Profile', icon: User },
+    { path: '/history', label: 'History', icon: Clock },
   ];
 
   // Helper to determine active state
   const isItemActive = (item) => {
     if (item.label === 'Home' && (currentPath === '/' || currentPath === '/dashboard')) return true;
     if (item.label === 'Upload' && currentPath === '/upload') return true;
-    if (item.label === 'Analyze' && currentPath === '/analyze') return true;
-    if (item.label === 'Results' && currentPath === '/results') return true;
+    if (item.label === 'Results' && (currentPath === '/results' || currentPath === '/analyze')) return true;
     if (item.label === 'Reports' && currentPath === '/reports') return true;
-    if (item.label === 'History' && currentPath === '/history') return true;
     if (item.label === 'Resources' && currentPath === '/resources') return true;
-    if (item.label === 'Profile' && currentPath === '/profile') return true;
+    if (item.label === 'History' && currentPath === '/history') return true;
     return false;
   };
 
   return (
-    <aside className="app-sidebar">
+    <aside className={`app-sidebar ${activeCollapsed ? 'collapsed' : ''}`}>
+      {/* Top Toggle Row */}
+      <div className="sidebar-header-toggle">
+        {!activeCollapsed && <span className="sidebar-section-title">Navigation</span>}
+        <button 
+          className="sidebar-collapse-btn" 
+          onClick={handleToggle} 
+          title={activeCollapsed ? "Expand sidebar" : "Shrink sidebar"}
+          aria-label={activeCollapsed ? "Expand sidebar" : "Shrink sidebar"}
+        >
+          {activeCollapsed ? <ChevronRight size={18} /> : <ChevronLeft size={18} />}
+        </button>
+      </div>
+
       {/* Navigation List */}
       <nav className="sidebar-nav">
         {navItems.map((item, idx) => {
@@ -47,12 +79,14 @@ export default function Sidebar({ currentPath, onNavigate }) {
           return (
             <button
               key={`${item.label}-${idx}`}
-              className={`nav-link ${active ? 'active' : ''}`}
+              className={`nav-link ${active ? 'active' : ''} ${activeCollapsed ? 'icon-only' : ''}`}
               onClick={() => onNavigate(item.path)}
+              title={activeCollapsed ? item.label : undefined}
               aria-current={active ? 'page' : undefined}
+              aria-label={item.label}
             >
-              <IconComponent size={19} className="nav-icon" />
-              <span className="nav-label">{item.label}</span>
+              <IconComponent size={20} className="nav-icon" />
+              {!activeCollapsed && <span className="nav-label">{item.label}</span>}
             </button>
           );
         })}
@@ -63,25 +97,70 @@ export default function Sidebar({ currentPath, onNavigate }) {
         <div className="sidebar-heart-wrapper">
           <img src={heartImg} alt="Healthy Heart Graphic" className="sidebar-heart-img" />
         </div>
-        <div className="sidebar-motto">
-          <span>Healthier</span>
-          <span>Hearts</span>
-          <span>Brighter</span>
-          <span>Tomorrows</span>
-        </div>
+        {!activeCollapsed && (
+          <div className="sidebar-motto">
+            <span>Healthier</span>
+            <span>Hearts</span>
+            <span>Brighter</span>
+            <span>Tomorrows</span>
+          </div>
+        )}
       </div>
 
       <style>{`
         .app-sidebar {
-          width: var(--sidebar-width);
-          min-width: var(--sidebar-width);
+          width: ${activeCollapsed ? '76px' : 'var(--sidebar-width)'};
+          min-width: ${activeCollapsed ? '76px' : 'var(--sidebar-width)'};
           background-color: #F9E8EC;
           border-right: 1px solid var(--burgundy-border);
           display: flex;
           flex-direction: column;
           justify-content: space-between;
-          padding: 24px 16px;
+          padding: 16px ${activeCollapsed ? '10px' : '16px'};
           flex-shrink: 0;
+          transition: width 0.25s cubic-bezier(0.4, 0, 0.2, 1), padding 0.25s ease;
+          position: sticky;
+          top: var(--header-height);
+          height: calc(100vh - var(--header-height));
+          box-sizing: border-box;
+          z-index: 20;
+        }
+
+        .sidebar-header-toggle {
+          display: flex;
+          align-items: center;
+          justify-content: ${activeCollapsed ? 'center' : 'space-between'};
+          margin-bottom: 14px;
+          padding: 0 4px;
+        }
+
+        .sidebar-section-title {
+          font-size: 11.5px;
+          text-transform: uppercase;
+          letter-spacing: 0.8px;
+          font-weight: 700;
+          color: var(--burgundy-primary);
+          opacity: 0.8;
+        }
+
+        .sidebar-collapse-btn {
+          width: 32px;
+          height: 32px;
+          border-radius: var(--radius-sm);
+          background: #FFFFFF;
+          border: 1px solid var(--burgundy-border);
+          color: var(--burgundy-primary);
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          cursor: pointer;
+          transition: all 0.2s ease;
+          box-shadow: 0 1px 3px rgba(133, 16, 54, 0.08);
+        }
+
+        .sidebar-collapse-btn:hover {
+          background-color: var(--pink-surface);
+          transform: scale(1.05);
         }
 
         .sidebar-nav {
@@ -94,7 +173,8 @@ export default function Sidebar({ currentPath, onNavigate }) {
           display: flex;
           align-items: center;
           gap: 14px;
-          padding: 10px 16px;
+          padding: ${activeCollapsed ? '10px 0' : '10px 16px'};
+          justify-content: ${activeCollapsed ? 'center' : 'flex-start'};
           border-radius: var(--radius-md);
           background: transparent;
           border: none;
@@ -106,6 +186,7 @@ export default function Sidebar({ currentPath, onNavigate }) {
           width: 100%;
           text-align: left;
           font-family: inherit;
+          position: relative;
         }
 
         .nav-link:hover {
@@ -131,23 +212,25 @@ export default function Sidebar({ currentPath, onNavigate }) {
 
         .nav-label {
           letter-spacing: -0.1px;
+          white-space: nowrap;
         }
 
         .sidebar-bottom {
           display: flex;
           flex-direction: column;
-          align-items: flex-start;
-          padding: 12px 10px 0 10px;
+          align-items: ${activeCollapsed ? 'center' : 'flex-start'};
+          padding: ${activeCollapsed ? '8px 0 0 0' : '12px 10px 0 10px'};
           margin-top: auto;
         }
 
         .sidebar-heart-wrapper {
-          width: 86px;
-          height: 86px;
-          margin-bottom: 12px;
+          width: ${activeCollapsed ? '44px' : '86px'};
+          height: ${activeCollapsed ? '44px' : '86px'};
+          margin-bottom: ${activeCollapsed ? '4px' : '12px'};
           display: flex;
           align-items: center;
           justify-content: center;
+          transition: all 0.25s ease;
         }
 
         .sidebar-heart-img {
@@ -166,6 +249,7 @@ export default function Sidebar({ currentPath, onNavigate }) {
           line-height: 1.25;
           color: var(--burgundy-primary);
           letter-spacing: -0.2px;
+          white-space: nowrap;
         }
       `}</style>
     </aside>

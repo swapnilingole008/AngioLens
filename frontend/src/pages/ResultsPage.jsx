@@ -58,6 +58,15 @@ export default function ResultsPage({ onNavigate }) {
   const stenosisNum = analysisData?.result?.severity ? Math.round(analysisData.result.severity) : 68;
   const confidenceNum = analysisData?.result?.confidence ? Math.round(analysisData.result.confidence) : 92;
 
+  const handleViewFullReport = () => {
+    const analysisId = analysisData?.analysis_id || api.getCurrentAnalysisId() || 1;
+    api.setCurrentAnalysisId(analysisId);
+    try {
+      localStorage.setItem('angiolens_open_report_detail', 'true');
+    } catch {}
+    onNavigate('/reports');
+  };
+
   return (
     <div className="results-page-container">
       {/* Top Action Bar */}
@@ -74,7 +83,7 @@ export default function ResultsPage({ onNavigate }) {
         </div>
 
         <div className="top-bar-right">
-          <button className="btn-outline-burgundy" onClick={() => onNavigate('/reports')}>
+          <button className="btn-outline-burgundy" onClick={handleViewFullReport}>
             <FileText size={16} />
             <span>View Full Report</span>
           </button>
@@ -111,7 +120,7 @@ export default function ResultsPage({ onNavigate }) {
             </div>
           </div>
 
-          <AngiogramViewer onOpenFullReport={() => onNavigate('/reports')} />
+          <AngiogramViewer onOpenFullReport={handleViewFullReport} />
         </div>
 
         {/* Right Card: Vessel Metrics & Lesion Quantifications */}

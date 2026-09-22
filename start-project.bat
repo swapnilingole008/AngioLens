@@ -1,7 +1,7 @@
 @echo off
 
 echo Starting Flask backend...
-start "Flask Backend" cmd /k "cd /d %~dp0backend && py -3.13 app.py"
+start "Flask Backend" cmd /k "cd /d %~dp0backend && python app.py"
 
 echo Starting React frontend...
 start "React Frontend" cmd /k "cd /d %~dp0frontend && npm run dev"

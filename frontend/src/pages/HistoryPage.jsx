@@ -1,91 +1,40 @@
 import React, { useState, useEffect } from 'react';
-import { Search, Filter, Eye, FileText, ChevronRight } from 'lucide-react';
+import { Search, Filter, Eye, FileText, ChevronRight, Loader2 } from 'lucide-react';
 import api from '../api';
 
 export default function HistoryPage({ onNavigate }) {
   const [searchTerm, setSearchTerm] = useState('');
   const [filter, setFilter] = useState('all');
-  const [dbRecords, setDbRecords] = useState([]);
+  const [records, setRecords] = useState([]);
+  const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
+    let isMounted = true;
     const fetchHistory = async () => {
+      setIsLoading(true);
       try {
         const res = await api.getHistory();
-        if (res?.records && res.records.length > 0) {
-          setDbRecords(res.records);
+        if (isMounted) {
+          if (res?.records && Array.isArray(res.records)) {
+            setRecords(res.records);
+          } else {
+            setRecords([]);
+          }
         }
       } catch (err) {
         console.error('Failed to fetch history from database:', err);
+        if (isMounted) {
+          setRecords([]);
+        }
+      } finally {
+        if (isMounted) {
+          setIsLoading(false);
+        }
       }
     };
     fetchHistory();
+    return () => { isMounted = false; };
   }, []);
-
-  const defaultRecords = [
-    {
-      id: 'PAT-00123',
-      analysis_id: 1,
-      name: 'Ramesh Patel',
-      age: 56,
-      gender: 'Male',
-      date: 'Today, 10:45 AM',
-      vessel: 'LAD Proximal',
-      stenosis: '68%',
-      severity: 'Moderate',
-      confidence: '92%',
-      verified: true
-    },
-    {
-      id: 'PAT-00120',
-      name: 'Sunita Rao',
-      age: 62,
-      gender: 'Female',
-      date: 'Yesterday, 03:15 PM',
-      vessel: 'RCA Mid',
-      stenosis: '85%',
-      severity: 'Severe',
-      confidence: '95%',
-      verified: true
-    },
-    {
-      id: 'PAT-00118',
-      name: 'Anil Verma',
-      age: 49,
-      gender: 'Male',
-      date: '19 Sep 2026',
-      vessel: 'LCx Distal',
-      stenosis: '35%',
-      severity: 'Mild',
-      confidence: '88%',
-      verified: false
-    },
-    {
-      id: 'PAT-00115',
-      name: 'Kavita Menon',
-      age: 58,
-      gender: 'Female',
-      date: '18 Sep 2026',
-      vessel: 'LAD Mid',
-      stenosis: '72%',
-      severity: 'Severe',
-      confidence: '94%',
-      verified: true
-    },
-    {
-      id: 'PAT-00112',
-      name: 'Vikram Singh',
-      age: 67,
-      gender: 'Male',
-      date: '16 Sep 2026',
-      vessel: 'LMCA / Bifurcation',
-      stenosis: '45%',
-      severity: 'Moderate',
-      confidence: '90%',
-      verified: false
-    }
-  ];
-
-  const records = dbRecords.length > 0 ? dbRecords : defaultRecords;
 
   const filtered = records.filter((r) => {
     const matchesSearch = (r.name || '').toLowerCase().includes(searchTerm.toLowerCase()) || (r.id || '').toLowerCase().includes(searchTerm.toLowerCase());
@@ -147,65 +96,91 @@ export default function HistoryPage({ onNavigate }) {
             </tr>
           </thead>
           <tbody>
-            {filtered.map((item) => (
-              <tr 
-                key={item.id + (item.analysis_id || '')} 
-                className="history-row" 
-                onClick={() => {
-                  if (item.analysis_id) api.setCurrentAnalysisId(item.analysis_id);
-                  onNavigate('/results');
-                }}
-              >
-                <td>
-                  <span className="patient-code">{item.id}</span>
-                </td>
-                <td>
-                  <div className="patient-name-cell">
-                    <span className="name">{item.name}</span>
-                    <span className="meta">{item.age} Y • {item.gender}</span>
+            {isLoading ? (
+              <tr>
+                <td colSpan="8" className="history-empty-cell">
+                  <div className="history-loading-container">
+                    <Loader2 size={26} className="history-spinner" />
+                    <span className="history-loading-title">Loading patient records from database...</span>
+                    <span className="history-loading-sub">Connecting to PostgreSQL and fetching analyses</span>
                   </div>
-                </td>
-                <td>
-                  <span className="date-text">{item.date}</span>
-                </td>
-                <td>
-                  <span className="vessel-tag">{item.vessel}</span>
-                </td>
-                <td>
-                  <div className="stenosis-cell">
-                    <span className={`stenosis-val ${item.severity.toLowerCase()}`}>
-                      {item.stenosis}
-                    </span>
-                    <span className={`severity-badge ${item.severity.toLowerCase()}`}>
-                      {item.severity}
-                    </span>
-                  </div>
-                </td>
-                <td>
-                  <span className="confidence-pill">{item.confidence}</span>
-                </td>
-                <td>
-                  {item.verified ? (
-                    <span className="status-badge verified">Verified ✓</span>
-                  ) : (
-                    <span className="status-badge pending">Pending</span>
-                  )}
-                </td>
-                <td className="td-action">
-                  <button 
-                    className="action-link-btn" 
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      if (item.analysis_id) api.setCurrentAnalysisId(item.analysis_id);
-                      onNavigate('/results');
-                    }}
-                  >
-                    <span>View</span>
-                    <ChevronRight size={14} />
-                  </button>
                 </td>
               </tr>
-            ))}
+            ) : filtered.length === 0 ? (
+              <tr>
+                <td colSpan="8" className="history-empty-cell">
+                  <div className="history-empty-container">
+                    <FileText size={36} className="history-empty-icon" />
+                    <span className="history-empty-title">No patient records found</span>
+                    <span className="history-empty-sub">
+                      {searchTerm || filter !== 'all'
+                        ? 'No records match your search or filter criteria. Try clearing filters.'
+                        : 'No angiogram analysis records exist in the database yet.'}
+                    </span>
+                  </div>
+                </td>
+              </tr>
+            ) : (
+              filtered.map((item) => (
+                <tr 
+                  key={item.id + (item.analysis_id || '')} 
+                  className="history-row" 
+                  onClick={() => {
+                    if (item.analysis_id) api.setCurrentAnalysisId(item.analysis_id);
+                    onNavigate('/results');
+                  }}
+                >
+                  <td>
+                    <span className="patient-code">{item.id}</span>
+                  </td>
+                  <td>
+                    <div className="patient-name-cell">
+                      <span className="name">{item.name}</span>
+                      <span className="meta">{item.age} Y • {item.gender}</span>
+                    </div>
+                  </td>
+                  <td>
+                    <span className="date-text">{item.date}</span>
+                  </td>
+                  <td>
+                    <span className="vessel-tag">{item.vessel}</span>
+                  </td>
+                  <td>
+                    <div className="stenosis-cell">
+                      <span className={`stenosis-val ${item.severity?.toLowerCase() || 'moderate'}`}>
+                        {item.stenosis}
+                      </span>
+                      <span className={`severity-badge ${item.severity?.toLowerCase() || 'moderate'}`}>
+                        {item.severity}
+                      </span>
+                    </div>
+                  </td>
+                  <td>
+                    <span className="confidence-pill">{item.confidence}</span>
+                  </td>
+                  <td>
+                    {item.verified ? (
+                      <span className="status-badge verified">Verified ✓</span>
+                    ) : (
+                      <span className="status-badge pending">Pending</span>
+                    )}
+                  </td>
+                  <td className="td-action">
+                    <button 
+                      className="action-link-btn" 
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        if (item.analysis_id) api.setCurrentAnalysisId(item.analysis_id);
+                        onNavigate('/results');
+                      }}
+                    >
+                      <span>View</span>
+                      <ChevronRight size={14} />
+                    </button>
+                  </td>
+                </tr>
+              ))
+            )}
           </tbody>
         </table>
       </div>
@@ -436,6 +411,52 @@ export default function HistoryPage({ onNavigate }) {
 
         .action-link-btn:hover {
           text-decoration: underline;
+        }
+
+        .history-empty-cell {
+          text-align: center;
+          padding: 56px 20px !important;
+          background: #FFFFFF;
+        }
+
+        .history-loading-container,
+        .history-empty-container {
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          justify-content: center;
+          gap: 8px;
+        }
+
+        .history-spinner {
+          color: var(--burgundy-primary);
+          animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+          from { transform: rotate(0deg); }
+          to { transform: rotate(360deg); }
+        }
+
+        .history-loading-title,
+        .history-empty-title {
+          font-size: 15px;
+          font-weight: 700;
+          color: var(--text-main);
+        }
+
+        .history-loading-sub,
+        .history-empty-sub {
+          font-size: 12.5px;
+          color: var(--text-secondary);
+          max-width: 380px;
+          line-height: 1.4;
+        }
+
+        .history-empty-icon {
+          color: var(--burgundy-primary);
+          opacity: 0.4;
+          margin-bottom: 4px;
         }
       `}</style>
     </div>

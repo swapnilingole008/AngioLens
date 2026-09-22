@@ -1,6 +1,12 @@
 import os
 import urllib.parse
-from datetime import datetime
+import smtplib
+import ssl
+import random
+import string
+from datetime import datetime, timedelta
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
 from pathlib import Path
 from dotenv import load_dotenv
 from flask import Flask, jsonify, request
@@ -26,17 +32,42 @@ if root_env.exists():
 else:
     load_dotenv()
 
+RAW_DATABASE_URL = os.getenv("DATABASE_URL", "").strip()
 DB_HOST = os.getenv("DB_HOST", "localhost")
 DB_PORT = os.getenv("DB_PORT", "5432")
 DB_NAME = os.getenv("DB_NAME", "angiolens_db")
 DB_USER = os.getenv("DB_USER", "postgres")
 DB_PASSWORD = os.getenv("DB_PASSWORD", "")
+DB_SSLMODE = os.getenv("DB_SSLMODE", "")
 FLASK_ENV = os.getenv("FLASK_ENV", "development")
 SECRET_KEY = os.getenv("SECRET_KEY", "default-dev-secret-key")
 
-# 2. Database Connection URL (safely encode special characters in password)
-encoded_password = urllib.parse.quote_plus(DB_PASSWORD)
-DATABASE_URL = f"postgresql+psycopg2://{DB_USER}:{encoded_password}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
+# SMTP Configuration
+SMTP_HOST = os.getenv("SMTP_HOST", "").strip()
+SMTP_PORT = int(os.getenv("SMTP_PORT", "587")) if os.getenv("SMTP_PORT", "").strip().isdigit() else 587
+SMTP_USER = os.getenv("SMTP_USER", "").strip()
+SMTP_PASSWORD = os.getenv("SMTP_PASSWORD", "").strip()
+SMTP_SENDER_EMAIL = os.getenv("SMTP_SENDER_EMAIL", "no-reply@angiolens.com").strip()
+SMTP_SENDER_NAME = os.getenv("SMTP_SENDER_NAME", "AngioLens Medical Verification").strip()
+SMTP_USE_TLS = os.getenv("SMTP_USE_TLS", "True").lower() in ("true", "1", "yes")
+SMTP_USE_SSL = os.getenv("SMTP_USE_SSL", "False").lower() in ("true", "1", "yes")
+
+# 2. Database Connection URL
+if RAW_DATABASE_URL:
+    db_url = RAW_DATABASE_URL
+    if db_url.startswith("postgres://"):
+        db_url = db_url.replace("postgres://", "postgresql+psycopg2://", 1)
+    elif db_url.startswith("postgresql://"):
+        db_url = db_url.replace("postgresql://", "postgresql+psycopg2://", 1)
+    
+    if ("neon.tech" in db_url or DB_SSLMODE == "require") and "sslmode" not in db_url:
+        connector = "&" if "?" in db_url else "?"
+        db_url = f"{db_url}{connector}sslmode=require"
+    DATABASE_URL = db_url
+else:
+    encoded_password = urllib.parse.quote_plus(DB_PASSWORD)
+    ssl_query = "?sslmode=require" if DB_SSLMODE == "require" else ""
+    DATABASE_URL = f"postgresql+psycopg2://{DB_USER}:{encoded_password}@{DB_HOST}:{DB_PORT}/{DB_NAME}{ssl_query}"
 
 # Create SQLAlchemy engine and scoped session
 engine = create_engine(
@@ -48,7 +79,7 @@ engine = create_engine(
 SessionFactory = sessionmaker(bind=engine, autocommit=False, autoflush=False)
 db_session = scoped_session(SessionFactory)
 
-# 3. SQLAlchemy Models mapping existing PostgreSQL tables
+# 3. SQLAlchemy Models mapping PostgreSQL tables
 Base = declarative_base()
 
 class User(Base):
@@ -59,6 +90,18 @@ class User(Base):
     email = Column(String, nullable=False, unique=True)
     password_hash = Column(Text, nullable=False)
     role = Column(String)
+    mobile_number = Column(String)
+    dob = Column(String)
+    registration_number = Column(String)
+    registration_authority = Column(String)
+    medical_degree = Column(String)
+    specialization = Column(String)
+    hospital_name = Column(String)
+    experience_years = Column(String)
+    hospital_id_card = Column(String)
+    professional_address = Column(Text)
+    avatar_url = Column(Text)
+    is_admin = Column(Boolean, default=False)
     created_at = Column(DateTime, default=datetime.utcnow)
 
     def to_dict(self):
@@ -66,7 +109,93 @@ class User(Base):
             "id": self.id,
             "name": self.name,
             "email": self.email,
-            "role": self.role,
+            "role": self.role or "Cardiologist",
+            "mobile_number": self.mobile_number,
+            "dob": self.dob,
+            "registration_number": self.registration_number,
+            "registration_authority": self.registration_authority,
+            "medical_degree": self.medical_degree,
+            "specialization": self.specialization,
+            "hospital_name": self.hospital_name,
+            "experience_years": self.experience_years,
+            "hospital_id_card": self.hospital_id_card,
+            "professional_address": self.professional_address,
+            "avatar_url": self.avatar_url,
+            "is_admin": bool(self.is_admin),
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+        }
+
+class DoctorApplication(Base):
+    __tablename__ = 'doctor_applications'
+
+    id = Column(Integer, primary_key=True)
+    full_name = Column(String, nullable=False)
+    email = Column(String, nullable=False)
+    mobile_number = Column(String, nullable=False)
+    dob = Column(String)
+    registration_number = Column(String, nullable=False)  # MCI / State Medical Council Reg No
+    registration_authority = Column(String, nullable=False)  # Maharashtra Medical Council etc
+    medical_degree = Column(String, nullable=False)  # MBBS / MD / DM Cardiology
+    specialization = Column(String, nullable=False)  # Cardiology / Interventional Cardiology
+    hospital_name = Column(String, nullable=False)  # Ruby Hall Clinic / Central Hospital
+    experience_years = Column(String)
+    hospital_id_card = Column(String)  # Employee ID / H12345
+    professional_address = Column(Text, nullable=False)
+    profile_photo = Column(Text)
+    registration_certificate = Column(Text)
+    degree_certificate = Column(Text)
+    specialization_certificate = Column(Text)
+    hospital_id_doc = Column(Text)
+    govt_id_doc = Column(Text)
+    status = Column(String, default='pending')  # 'pending', 'approved', 'rejected'
+    rejection_reason = Column(Text)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    reviewed_at = Column(DateTime)
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "full_name": self.full_name,
+            "email": self.email,
+            "mobile_number": self.mobile_number,
+            "dob": self.dob,
+            "registration_number": self.registration_number,
+            "registration_authority": self.registration_authority,
+            "medical_degree": self.medical_degree,
+            "specialization": self.specialization,
+            "hospital_name": self.hospital_name,
+            "experience_years": self.experience_years,
+            "hospital_id_card": self.hospital_id_card,
+            "professional_address": self.professional_address,
+            "profile_photo": self.profile_photo,
+            "registration_certificate": self.registration_certificate,
+            "degree_certificate": self.degree_certificate,
+            "specialization_certificate": self.specialization_certificate,
+            "hospital_id_doc": self.hospital_id_doc,
+            "govt_id_doc": self.govt_id_doc,
+            "status": self.status,
+            "rejection_reason": self.rejection_reason,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "reviewed_at": self.reviewed_at.isoformat() if self.reviewed_at else None,
+        }
+
+class PasswordResetOTP(Base):
+    __tablename__ = 'password_reset_otps'
+
+    id = Column(Integer, primary_key=True)
+    email = Column(String, nullable=False)
+    otp_code = Column(String, nullable=False)
+    expires_at = Column(DateTime, nullable=False)
+    used = Column(Boolean, default=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "email": self.email,
+            "otp_code": self.otp_code,
+            "expires_at": self.expires_at.isoformat() if self.expires_at else None,
+            "used": self.used,
             "created_at": self.created_at.isoformat() if self.created_at else None,
         }
 
@@ -172,12 +301,182 @@ def add_cors_headers(response):
 def options_handler(subpath):
     return ('', 204)
 
-# 5. Helper Functions
+# ----------------- SMTP Email Dispatcher -----------------
+
+def send_email(to_email, subject, html_content, text_content=None):
+    """
+    Dispatches automated clinical notification emails via configured SMTP server.
+    Logs email details clearly in server output if SMTP is in simulation/development mode.
+    """
+    if not text_content:
+        import re
+        text_content = html_content.replace("<br>", "\n").replace("</p>", "\n\n").replace("</h2>", "\n").replace("</h1>", "\n")
+        text_content = re.sub(r'<[^>]+>', '', text_content)
+
+    if not SMTP_HOST or not SMTP_USER:
+        print(f"\n==================================================")
+        print(f"📧 [SMTP SIMULATION / LOCAL MODE]")
+        print(f"To: {to_email}")
+        print(f"Subject: {subject}")
+        print(f"Content:\n{text_content.strip()}")
+        print(f"==================================================\n")
+        return True, "Simulation mode: Email logged to server console."
+
+    try:
+        msg = MIMEMultipart("alternative")
+        msg["Subject"] = subject
+        sender_email = SMTP_SENDER_EMAIL or SMTP_USER
+        msg["From"] = f"{SMTP_SENDER_NAME} <{sender_email}>"
+        msg["To"] = to_email
+
+        part1 = MIMEText(text_content, "plain")
+        part2 = MIMEText(html_content, "html")
+        msg.attach(part1)
+        msg.attach(part2)
+
+        if SMTP_USE_SSL:
+            context = ssl.create_default_context()
+            with smtplib.SMTP_SSL(SMTP_HOST, SMTP_PORT, context=context, timeout=15) as server:
+                if SMTP_PASSWORD:
+                    server.login(SMTP_USER, SMTP_PASSWORD)
+                server.sendmail(sender_email, to_email, msg.as_string())
+        else:
+            with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=15) as server:
+                if SMTP_USE_TLS:
+                    context = ssl.create_default_context()
+                    server.starttls(context=context)
+                if SMTP_PASSWORD:
+                    server.login(SMTP_USER, SMTP_PASSWORD)
+                server.sendmail(sender_email, to_email, msg.as_string())
+        
+        print(f"[SMTP DISPATCH SUCCESS] Sent email to {to_email} with subject: {subject}")
+        return True, "Email sent successfully"
+    except Exception as e:
+        print(f"[SMTP WARNING] Failed to deliver email to {to_email}: {e}")
+        return False, str(e)
+
+# Email HTML Builders
+def build_application_received_email(doctor_name, registration_num, council, hospital):
+    return f"""
+    <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; border: 1px solid #E5E7EB; border-radius: 8px; overflow: hidden;">
+        <div style="background-color: #851036; color: #ffffff; padding: 24px; text-align: center;">
+            <h1 style="margin: 0; font-size: 22px; font-weight: bold;">AngioLens Medical Verification</h1>
+            <p style="margin: 4px 0 0 0; font-size: 14px; opacity: 0.9;">Physician Credential Review Portal</p>
+        </div>
+        <div style="padding: 24px; color: #1F2937; line-height: 1.6;">
+            <h2 style="color: #851036; font-size: 18px; margin-top: 0;">Dear {doctor_name},</h2>
+            <p>Thank you for applying to join the <strong>AngioLens AI Coronary Angiogram Analysis Platform</strong>.</p>
+            <p>Your medical credentials and verification documents have been received by our Administrative Review Board.</p>
+            
+            <div style="background-color: #FAF1F3; border-left: 4px solid #851036; padding: 14px; margin: 18px 0; border-radius: 4px;">
+                <p style="margin: 3px 0;"><strong>Registration Number:</strong> {registration_num}</p>
+                <p style="margin: 3px 0;"><strong>Issuing Authority:</strong> {council}</p>
+                <p style="margin: 3px 0;"><strong>Hospital / Affiliation:</strong> {hospital}</p>
+                <p style="margin: 3px 0;"><strong>Status:</strong> <span style="color: #D97706; font-weight: bold;">Pending Administrative Verification</span></p>
+            </div>
+            
+            <p>Our medical board will review your Medical Council Registration, degree certificates, and hospital association. Once approved, you will receive an automated confirmation email with your login credentials.</p>
+            <p style="margin-bottom: 0;">Best regards,<br><strong>AngioLens Credentialing & Medical Board</strong></p>
+        </div>
+        <div style="background-color: #F9FAFB; padding: 14px; text-align: center; font-size: 12px; color: #6B7280; border-top: 1px solid #E5E7EB;">
+            This is an automated clinical notification. Please do not reply directly to this email.
+        </div>
+    </div>
+    """
+
+def build_account_approved_email(doctor_name, email, mobile_number, hospital):
+    return f"""
+    <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; border: 1px solid #E5E7EB; border-radius: 8px; overflow: hidden;">
+        <div style="background-color: #059669; color: #ffffff; padding: 24px; text-align: center;">
+            <h1 style="margin: 0; font-size: 22px; font-weight: bold;">AngioLens Access Approved!</h1>
+            <p style="margin: 4px 0 0 0; font-size: 14px; opacity: 0.9;">Verified Physician Account Activated</p>
+        </div>
+        <div style="padding: 24px; color: #1F2937; line-height: 1.6;">
+            <h2 style="color: #059669; font-size: 18px; margin-top: 0;">Congratulations, {doctor_name}!</h2>
+            <p>Your medical credentials for <strong>{hospital}</strong> have been verified and approved by the AngioLens Medical Board.</p>
+            
+            <p>You can now sign in to the platform using your credentials below:</p>
+            
+            <div style="background-color: #ECFDF5; border: 1px solid #A7F3D0; padding: 18px; margin: 18px 0; border-radius: 6px;">
+                <p style="margin: 4px 0; font-size: 15px;"><strong>Username (Email):</strong> <span style="font-family: monospace; color: #065F46;">{email}</span></p>
+                <p style="margin: 4px 0; font-size: 15px;"><strong>Initial Password:</strong> <span style="font-family: monospace; color: #065F46; font-weight: bold;">{mobile_number}</span></p>
+                <p style="margin: 8px 0 0 0; font-size: 12px; color: #047857;">* Your initial password is set to your registered mobile number. You can change this anytime from your Profile settings.</p>
+            </div>
+            
+            <p>You have full access to:</p>
+            <ul style="padding-left: 20px; color: #4B5563;">
+                <li>AI Coronary Angiogram Vessel Segmentation</li>
+                <li>Quantitative Coronary Arteriography (QCA) Stenosis Assessment</li>
+                <li>Official Standardized Clinical Report Generation & PDF Export</li>
+                <li>Live Cath Lab CAD-RADS 2.0 and FFR Tools</li>
+            </ul>
+            
+            <p style="margin-bottom: 0;">Welcome aboard,<br><strong>AngioLens Clinical Team</strong></p>
+        </div>
+        <div style="background-color: #F9FAFB; padding: 14px; text-align: center; font-size: 12px; color: #6B7280; border-top: 1px solid #E5E7EB;">
+            AngioLens AI-Assisted Cath Lab System • Confidential & Secure
+        </div>
+    </div>
+    """
+
+def build_account_rejected_email(doctor_name, reason):
+    return f"""
+    <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; border: 1px solid #E5E7EB; border-radius: 8px; overflow: hidden;">
+        <div style="background-color: #DC2626; color: #ffffff; padding: 24px; text-align: center;">
+            <h1 style="margin: 0; font-size: 22px; font-weight: bold;">AngioLens Application Update</h1>
+            <p style="margin: 4px 0 0 0; font-size: 14px; opacity: 0.9;">Medical Credential Verification</p>
+        </div>
+        <div style="padding: 24px; color: #1F2937; line-height: 1.6;">
+            <h2 style="color: #DC2626; font-size: 18px; margin-top: 0;">Dear {doctor_name},</h2>
+            <p>Thank you for your interest in the AngioLens platform.</p>
+            <p>After reviewing your submitted credentials, our medical board was unable to approve your application at this time.</p>
+            
+            <div style="background-color: #FEE2E2; border-left: 4px solid #DC2626; padding: 14px; margin: 18px 0; border-radius: 4px;">
+                <p style="margin: 3px 0;"><strong>Reason / Feedback:</strong></p>
+                <p style="margin: 3px 0; color: #991B1B;">{reason or 'Submitted medical registration certificates or institutional affiliation could not be verified against the state medical council registry.'}</p>
+            </div>
+            
+            <p>If you believe this is an error or wish to re-submit with updated documentation, please contact our administrative team or submit a new application with the corrected certificates.</p>
+            <p style="margin-bottom: 0;">Best regards,<br><strong>AngioLens Credentialing Board</strong></p>
+        </div>
+        <div style="background-color: #F9FAFB; padding: 14px; text-align: center; font-size: 12px; color: #6B7280; border-top: 1px solid #E5E7EB;">
+            AngioLens Medical Review Department
+        </div>
+    </div>
+    """
+
+def build_otp_email(email, otp_code):
+    return f"""
+    <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; border: 1px solid #E5E7EB; border-radius: 8px; overflow: hidden;">
+        <div style="background-color: #851036; color: #ffffff; padding: 24px; text-align: center;">
+            <h1 style="margin: 0; font-size: 22px; font-weight: bold;">Password Reset OTP</h1>
+            <p style="margin: 4px 0 0 0; font-size: 14px; opacity: 0.9;">AngioLens Physician Security</p>
+        </div>
+        <div style="padding: 24px; color: #1F2937; line-height: 1.6; text-align: center;">
+            <h2 style="color: #1F2937; font-size: 18px; margin-top: 0;">Verification Code</h2>
+            <p>We received a request to reset the password for your AngioLens account (<strong>{email}</strong>).</p>
+            <p>Please enter the following 6-digit One-Time Password (OTP) to proceed:</p>
+            
+            <div style="background-color: #FAF1F3; border: 2px dashed #851036; padding: 18px; margin: 24px auto; max-width: 240px; border-radius: 8px;">
+                <span style="font-size: 32px; font-weight: 800; letter-spacing: 6px; color: #851036; font-family: monospace;">{otp_code}</span>
+            </div>
+            
+            <p style="font-size: 13px; color: #6B7280;">This OTP is valid for <strong>15 minutes</strong>. If you did not request a password reset, you can safely ignore this email.</p>
+        </div>
+        <div style="background-color: #F9FAFB; padding: 14px; text-align: center; font-size: 12px; color: #6B7280; border-top: 1px solid #E5E7EB;">
+            AngioLens Security & Authentication Service
+        </div>
+    </div>
+    """
+
+# ----------------- Helper Functions -----------------
+
 def format_analysis_data(analysis):
+    if not analysis:
+        return None
     patient = db_session.query(Patient).filter_by(id=analysis.patient_id).first()
     result = db_session.query(AnalysisResult).filter_by(analysis_id=analysis.id).first()
     review = db_session.query(DoctorReview).filter_by(analysis_id=analysis.id).first()
-
     return {
         "analysis_id": analysis.id,
         "patient": patient.to_dict() if patient else None,
@@ -187,7 +486,7 @@ def format_analysis_data(analysis):
         "verified": review.verified if review else False
     }
 
-# 6. API Endpoints
+# ----------------- Core Routes -----------------
 
 @app.route('/', methods=['GET'])
 def index():
@@ -216,14 +515,13 @@ def db_test():
                     "message": "Unexpected database query result"
                 }), 500
     except Exception as e:
-        # Return sanitized error message without leaking credentials
         return jsonify({
             "success": False,
             "message": "Database connection failed",
             "error_type": type(e).__name__
         }), 500
 
-# ----------------- Authentication -----------------
+# ----------------- Authentication & Profile -----------------
 
 @app.route('/api/signup', methods=['POST'])
 def signup():
@@ -240,7 +538,6 @@ def signup():
                 "message": "Name, email, and password are required"
             }), 400
 
-        # Check existing user
         existing_user = db_session.query(User).filter_by(email=email).first()
         if existing_user:
             return jsonify({
@@ -304,55 +601,507 @@ def login():
             "error_type": type(e).__name__
         }), 500
 
-@app.route('/api/profile', methods=['GET'])
-@app.route('/api/users/<int:user_id>', methods=['GET'])
-def get_user_profile(user_id=None):
+@app.route('/api/users', methods=['GET'])
+def get_all_users():
     try:
-        if user_id:
-            user = db_session.query(User).filter_by(id=user_id).first()
-        else:
-            email = request.args.get('email', '').strip().lower()
-            uid = request.args.get('id')
-            if uid:
-                user = db_session.query(User).filter_by(id=int(uid)).first()
-            elif email:
-                user = db_session.query(User).filter_by(email=email).first()
-            else:
-                user = db_session.query(User).order_by(User.id.asc()).first()
-
-        if not user:
-            return jsonify({
-                "success": False,
-                "message": "User not found"
-            }), 404
-
+        users = db_session.query(User).order_by(User.id.asc()).all()
         return jsonify({
             "success": True,
-            "user": user.to_dict()
+            "users": [u.to_dict() for u in users]
         }), 200
     except Exception as e:
         return jsonify({
             "success": False,
-            "message": "Could not retrieve user profile",
+            "message": "Failed to fetch users",
             "error_type": type(e).__name__
         }), 500
 
-# ----------------- Patients -----------------
+@app.route('/api/profile', methods=['GET', 'PUT'])
+@app.route('/api/users/<int:user_id>', methods=['GET'])
+def profile_handler(user_id=None):
+    if request.method == 'GET':
+        try:
+            if user_id:
+                user = db_session.query(User).filter_by(id=user_id).first()
+            else:
+                email = request.args.get('email', '').strip().lower()
+                uid = request.args.get('id')
+                if uid:
+                    user = db_session.query(User).filter_by(id=int(uid)).first()
+                elif email:
+                    user = db_session.query(User).filter_by(email=email).first()
+                else:
+                    user = db_session.query(User).order_by(User.id.asc()).first()
 
-@app.route('/api/patients', methods=['POST'])
-def save_patient():
+            if not user:
+                return jsonify({
+                    "success": False,
+                    "message": "User not found"
+                }), 404
+
+            return jsonify({
+                "success": True,
+                "user": user.to_dict()
+            }), 200
+        except Exception as e:
+            return jsonify({
+                "success": False,
+                "message": "Could not retrieve user profile",
+                "error_type": type(e).__name__
+            }), 500
+
+    # PUT (Update Profile)
     try:
         data = request.get_json() or {}
-        patient_id = data.get('patient_id') or data.get('patientId') or 'PAT-00123'
+        uid = data.get('id') or request.args.get('id')
+        email = data.get('email') or request.args.get('email')
+
+        user = None
+        if uid:
+            user = db_session.query(User).filter_by(id=int(uid)).first()
+        elif email:
+            user = db_session.query(User).filter_by(email=email.strip().lower()).first()
+        else:
+            user = db_session.query(User).first()
+
+        if not user:
+            return jsonify({"success": False, "message": "User not found to update"}), 404
+
+        if 'name' in data: user.name = data['name'].strip()
+        if 'mobile_number' in data: user.mobile_number = data['mobile_number'].strip()
+        if 'dob' in data: user.dob = data['dob'].strip()
+        if 'registration_number' in data: user.registration_number = data['registration_number'].strip()
+        if 'registration_authority' in data: user.registration_authority = data['registration_authority'].strip()
+        if 'medical_degree' in data: user.medical_degree = data['medical_degree'].strip()
+        if 'specialization' in data: user.specialization = data['specialization'].strip()
+        if 'hospital_name' in data: user.hospital_name = data['hospital_name'].strip()
+        if 'experience_years' in data: user.experience_years = data['experience_years'].strip()
+        if 'hospital_id_card' in data: user.hospital_id_card = data['hospital_id_card'].strip()
+        if 'professional_address' in data: user.professional_address = data['professional_address'].strip()
+        if 'role' in data: user.role = data['role'].strip()
+        if 'avatar_url' in data: user.avatar_url = data['avatar_url']
+
+        db_session.commit()
+        return jsonify({
+            "success": True,
+            "message": "Profile updated successfully",
+            "user": user.to_dict()
+        }), 200
+    except Exception as e:
+        db_session.rollback()
+        return jsonify({"success": False, "message": "Failed to update profile", "error": str(e)}), 500
+
+# ----------------- Password Management (Change & Reset with OTP) -----------------
+
+@app.route('/api/auth/change-password', methods=['POST'])
+def change_password():
+    try:
+        data = request.get_json() or {}
+        email = data.get('email', '').strip().lower()
+        user_id = data.get('user_id')
+        current_password = data.get('current_password', '')
+        new_password = data.get('new_password', '')
+
+        if not new_password or len(new_password) < 4:
+            return jsonify({"success": False, "message": "New password must be at least 4 characters long"}), 400
+
+        user = None
+        if user_id:
+            user = db_session.query(User).filter_by(id=int(user_id)).first()
+        elif email:
+            user = db_session.query(User).filter_by(email=email).first()
+
+        if not user:
+            return jsonify({"success": False, "message": "User not found"}), 404
+
+        if not check_password_hash(user.password_hash, current_password):
+            return jsonify({"success": False, "message": "Current password is incorrect"}), 400
+
+        user.password_hash = generate_password_hash(new_password)
+        db_session.commit()
+
+        return jsonify({
+            "success": True,
+            "message": "Password changed successfully"
+        }), 200
+    except Exception as e:
+        db_session.rollback()
+        return jsonify({"success": False, "message": "Failed to change password", "error": str(e)}), 500
+
+@app.route('/api/auth/forgot-password', methods=['POST'])
+def forgot_password():
+    try:
+        data = request.get_json() or {}
+        email = data.get('email', '').strip().lower()
+
+        if not email:
+            return jsonify({"success": False, "message": "Email is required"}), 400
+
+        user = db_session.query(User).filter_by(email=email).first()
+        if not user:
+            app_record = db_session.query(DoctorApplication).filter_by(email=email).first()
+            if not app_record:
+                return jsonify({"success": False, "message": "No account found with this email address"}), 404
+
+        # Generate 6-digit OTP
+        otp_code = f"{random.randint(100000, 999999)}"
+        expires_at = datetime.utcnow() + timedelta(minutes=15)
+
+        otp_entry = PasswordResetOTP(
+            email=email,
+            otp_code=otp_code,
+            expires_at=expires_at,
+            used=False,
+            created_at=datetime.utcnow()
+        )
+        db_session.add(otp_entry)
+        db_session.commit()
+
+        # Send OTP Email
+        html_body = build_otp_email(email, otp_code)
+        sent, msg = send_email(email, "AngioLens - Password Reset Verification Code (OTP)", html_body)
+
+        return jsonify({
+            "success": True,
+            "message": "A 6-digit OTP has been sent to your email address.",
+            "email": email,
+            "expires_in_minutes": 15
+        }), 200
+    except Exception as e:
+        db_session.rollback()
+        return jsonify({"success": False, "message": "Failed to process forgot password request", "error": str(e)}), 500
+
+@app.route('/api/auth/reset-password', methods=['POST'])
+def reset_password():
+    try:
+        data = request.get_json() or {}
+        email = data.get('email', '').strip().lower()
+        otp_code = str(data.get('otp_code', '')).strip()
+        new_password = data.get('new_password', '')
+
+        if not email or not otp_code or not new_password:
+            return jsonify({"success": False, "message": "Email, OTP code, and new password are required"}), 400
+
+        if len(new_password) < 4:
+            return jsonify({"success": False, "message": "New password must be at least 4 characters long"}), 400
+
+        # Find latest valid OTP
+        otp_entry = db_session.query(PasswordResetOTP).filter_by(
+            email=email,
+            otp_code=otp_code,
+            used=False
+        ).order_by(PasswordResetOTP.id.desc()).first()
+
+        if not otp_entry:
+            return jsonify({"success": False, "message": "Invalid OTP verification code"}), 400
+
+        if otp_entry.expires_at < datetime.utcnow():
+            return jsonify({"success": False, "message": "OTP code has expired. Please request a new one."}), 400
+
+        user = db_session.query(User).filter_by(email=email).first()
+        if not user:
+            return jsonify({"success": False, "message": "Associated user account not found"}), 404
+
+        user.password_hash = generate_password_hash(new_password)
+        otp_entry.used = True
+        db_session.commit()
+
+        return jsonify({
+            "success": True,
+            "message": "Password reset successfully! You can now log in with your new password."
+        }), 200
+    except Exception as e:
+        db_session.rollback()
+        return jsonify({"success": False, "message": "Failed to reset password", "error": str(e)}), 500
+
+# ----------------- Doctor Registration Application (Doctor Credential Submission) -----------------
+
+@app.route('/api/doctor-applications', methods=['POST'])
+def submit_doctor_application():
+    try:
+        data = request.get_json() or {}
+        
+        full_name = data.get('full_name', '').strip()
+        email = data.get('email', '').strip().lower()
+        mobile_number = data.get('mobile_number', '').strip()
+        dob = data.get('dob', '').strip()
+        registration_number = data.get('registration_number', '').strip()
+        registration_authority = data.get('registration_authority', '').strip()
+        medical_degree = data.get('medical_degree', '').strip()
+        specialization = data.get('specialization', '').strip()
+        hospital_name = data.get('hospital_name', '').strip()
+        experience_years = data.get('experience_years', '').strip()
+        hospital_id_card = data.get('hospital_id_card', '').strip()
+        professional_address = data.get('professional_address', '').strip()
+        profile_photo = data.get('profile_photo', '')
+
+        # Document attachments
+        registration_certificate = data.get('registration_certificate', '')
+        degree_certificate = data.get('degree_certificate', '')
+        specialization_certificate = data.get('specialization_certificate', '')
+        hospital_id_doc = data.get('hospital_id_doc', '')
+        govt_id_doc = data.get('govt_id_doc', '')
+
+        # Validations
+        if not full_name:
+            return jsonify({"success": False, "message": "Full Name is required"}), 400
+        if not email or "@" not in email:
+            return jsonify({"success": False, "message": "Valid email address is required"}), 400
+        if not mobile_number:
+            return jsonify({"success": False, "message": "Mobile number is required"}), 400
+        if not registration_number:
+            return jsonify({"success": False, "message": "Medical Registration Number is mandatory"}), 400
+        if not registration_authority:
+            return jsonify({"success": False, "message": "Issuing Medical Council/Authority is mandatory"}), 400
+        if not medical_degree:
+            return jsonify({"success": False, "message": "Medical Degree (e.g. MBBS / MD / DM) is required"}), 400
+        if not specialization:
+            return jsonify({"success": False, "message": "Specialization is required"}), 400
+        if not hospital_name:
+            return jsonify({"success": False, "message": "Hospital / Institution affiliation is required"}), 400
+        if not professional_address:
+            return jsonify({"success": False, "message": "Professional Hospital Address is required"}), 400
+
+        existing_user = db_session.query(User).filter_by(email=email).first()
+        if existing_user:
+            return jsonify({"success": False, "message": "A registered doctor account already exists for this email"}), 409
+
+        existing_pending = db_session.query(DoctorApplication).filter_by(email=email, status='pending').first()
+        if existing_pending:
+            return jsonify({
+                "success": True,
+                "message": "Your application is already pending verification by the AngioLens Medical Board.",
+                "application": existing_pending.to_dict()
+            }), 200
+
+        application = DoctorApplication(
+            full_name=full_name,
+            email=email,
+            mobile_number=mobile_number,
+            dob=dob,
+            registration_number=registration_number,
+            registration_authority=registration_authority,
+            medical_degree=medical_degree,
+            specialization=specialization,
+            hospital_name=hospital_name,
+            experience_years=experience_years,
+            hospital_id_card=hospital_id_card,
+            professional_address=professional_address,
+            profile_photo=profile_photo,
+            registration_certificate=registration_certificate,
+            degree_certificate=degree_certificate,
+            specialization_certificate=specialization_certificate,
+            hospital_id_doc=hospital_id_doc,
+            govt_id_doc=govt_id_doc,
+            status='pending',
+            created_at=datetime.utcnow()
+        )
+        db_session.add(application)
+        db_session.commit()
+
+        # Send automated confirmation email
+        html_content = build_application_received_email(
+            doctor_name=full_name,
+            registration_num=registration_number,
+            council=registration_authority,
+            hospital=hospital_name
+        )
+        send_email(email, "AngioLens - Application Received for Medical Credential Review", html_content)
+
+        return jsonify({
+            "success": True,
+            "message": "Doctor credential verification application submitted successfully! Confirmation email dispatched.",
+            "application_id": application.id,
+            "application": application.to_dict()
+        }), 201
+    except Exception as e:
+        db_session.rollback()
+        return jsonify({"success": False, "message": "Failed to submit application", "error": str(e)}), 500
+
+# ----------------- Admin Portal Endpoints (/admin) -----------------
+
+@app.route('/api/admin/login', methods=['POST'])
+def admin_login():
+    try:
+        data = request.get_json() or {}
+        username = data.get('username', '').strip()
+        password = data.get('password', '').strip()
+
+        # Admin credentials: ID/username/email: admin (or admin@angiolens.com), Password: 12345
+        if (username.lower() in ('admin', 'admin@angiolens.com', 'administrator')) and password == '12345':
+            return jsonify({
+                "success": True,
+                "message": "Admin authenticated successfully",
+                "admin": {
+                    "id": "ADMIN-001",
+                    "name": "Medical Board Administrator",
+                    "email": "admin@angiolens.com",
+                    "role": "Super Admin"
+                }
+            }), 200
+
+        user = db_session.query(User).filter_by(email=username.lower(), is_admin=True).first()
+        if user and check_password_hash(user.password_hash, password):
+            return jsonify({
+                "success": True,
+                "message": "Admin authenticated successfully",
+                "admin": {
+                    "id": f"ADMIN-{user.id}",
+                    "name": user.name,
+                    "email": user.email,
+                    "role": "Administrator"
+                }
+            }), 200
+
+        return jsonify({"success": False, "message": "Invalid Admin credentials"}), 401
+    except Exception as e:
+        return jsonify({"success": False, "message": "Admin login failed", "error": str(e)}), 500
+
+@app.route('/api/admin/applications', methods=['GET'])
+def get_admin_applications():
+    try:
+        status = request.args.get('status', '').strip().lower()
+        query = db_session.query(DoctorApplication)
+        if status in ('pending', 'approved', 'rejected'):
+            query = query.filter_by(status=status)
+        
+        apps = query.order_by(DoctorApplication.created_at.desc()).all()
+        
+        total_count = db_session.query(DoctorApplication).count()
+        pending_count = db_session.query(DoctorApplication).filter_by(status='pending').count()
+        approved_count = db_session.query(DoctorApplication).filter_by(status='approved').count()
+        rejected_count = db_session.query(DoctorApplication).filter_by(status='rejected').count()
+
+        return jsonify({
+            "success": True,
+            "applications": [a.to_dict() for a in apps],
+            "stats": {
+                "total": total_count,
+                "pending": pending_count,
+                "approved": approved_count,
+                "rejected": rejected_count
+            }
+        }), 200
+    except Exception as e:
+        return jsonify({"success": False, "message": "Failed to fetch applications", "error": str(e)}), 500
+
+@app.route('/api/admin/applications/<int:app_id>/approve', methods=['POST'])
+def approve_doctor_application(app_id):
+    try:
+        app_record = db_session.query(DoctorApplication).filter_by(id=app_id).first()
+        if not app_record:
+            return jsonify({"success": False, "message": "Application record not found"}), 404
+
+        initial_password = app_record.mobile_number.strip()
+        if not initial_password:
+            initial_password = "doctor123"
+
+        user = db_session.query(User).filter_by(email=app_record.email).first()
+        if not user:
+            user = User(
+                name=app_record.full_name,
+                email=app_record.email,
+                password_hash=generate_password_hash(initial_password),
+                role=f"{app_record.specialization} ({app_record.medical_degree})",
+                mobile_number=app_record.mobile_number,
+                dob=app_record.dob,
+                registration_number=app_record.registration_number,
+                registration_authority=app_record.registration_authority,
+                medical_degree=app_record.medical_degree,
+                specialization=app_record.specialization,
+                hospital_name=app_record.hospital_name,
+                experience_years=app_record.experience_years,
+                hospital_id_card=app_record.hospital_id_card,
+                professional_address=app_record.professional_address,
+                avatar_url=app_record.profile_photo,
+                is_admin=False,
+                created_at=datetime.utcnow()
+            )
+            db_session.add(user)
+        else:
+            user.name = app_record.full_name
+            user.password_hash = generate_password_hash(initial_password)
+            user.role = f"{app_record.specialization} ({app_record.medical_degree})"
+            user.mobile_number = app_record.mobile_number
+            user.registration_number = app_record.registration_number
+            user.registration_authority = app_record.registration_authority
+            user.medical_degree = app_record.medical_degree
+            user.specialization = app_record.specialization
+            user.hospital_name = app_record.hospital_name
+            user.professional_address = app_record.professional_address
+
+        app_record.status = 'approved'
+        app_record.reviewed_at = datetime.utcnow()
+        db_session.commit()
+
+        # Send Approval Email to Doctor with Username (email) and Password (mobile number)
+        html_email = build_account_approved_email(
+            doctor_name=app_record.full_name,
+            email=app_record.email,
+            mobile_number=initial_password,
+            hospital=app_record.hospital_name
+        )
+        send_email(app_record.email, "AngioLens - Your Doctor Account Has Been Approved!", html_email)
+
+        return jsonify({
+            "success": True,
+            "message": f"Application for {app_record.full_name} approved! Doctor account created with password set to mobile number ({initial_password}). Confirmation email sent.",
+            "application": app_record.to_dict(),
+            "user": user.to_dict()
+        }), 200
+    except Exception as e:
+        db_session.rollback()
+        return jsonify({"success": False, "message": "Failed to approve application", "error": str(e)}), 500
+
+@app.route('/api/admin/applications/<int:app_id>/reject', methods=['POST'])
+def reject_doctor_application(app_id):
+    try:
+        data = request.get_json() or {}
+        reason = data.get('reason', 'Credentials could not be verified with the medical council.').strip()
+
+        app_record = db_session.query(DoctorApplication).filter_by(id=app_id).first()
+        if not app_record:
+            return jsonify({"success": False, "message": "Application record not found"}), 404
+
+        app_record.status = 'rejected'
+        app_record.rejection_reason = reason
+        app_record.reviewed_at = datetime.utcnow()
+        db_session.commit()
+
+        # Send Rejection Email
+        html_email = build_account_rejected_email(app_record.full_name, reason)
+        send_email(app_record.email, "AngioLens - Application Status Update", html_email)
+
+        return jsonify({
+            "success": True,
+            "message": f"Application for {app_record.full_name} marked as rejected. Email notification sent.",
+            "application": app_record.to_dict()
+        }), 200
+    except Exception as e:
+        db_session.rollback()
+        return jsonify({"success": False, "message": "Failed to reject application", "error": str(e)}), 500
+
+# ----------------- Patients -----------------
+
+@app.route('/api/patients', methods=['GET', 'POST'])
+def handle_patients():
+    if request.method == 'GET':
+        try:
+            patients = db_session.query(Patient).order_by(Patient.id.desc()).all()
+            return jsonify({
+                "success": True,
+                "patients": [p.to_dict() for p in patients]
+            }), 200
+        except Exception as e:
+            return jsonify({"success": False, "message": "Failed to fetch patients", "error": str(e)}), 500
+    
+    # POST
+    try:
+        data = request.get_json() or {}
+        patient_id = data.get('patient_id') or data.get('patientId') or f"PAT-{int(datetime.utcnow().timestamp())}"
         patient_id = str(patient_id).strip()
         age = data.get('age')
         gender = data.get('gender', 'Male')
-
-        if not patient_id:
-            return jsonify({
-                "success": False,
-                "message": "Patient ID is required"
-            }), 400
 
         try:
             age = int(age) if age is not None and str(age).strip() else None
@@ -383,11 +1132,7 @@ def save_patient():
         }), 200
     except Exception as e:
         db_session.rollback()
-        return jsonify({
-            "success": False,
-            "message": "Failed to save patient",
-            "error_type": type(e).__name__
-        }), 500
+        return jsonify({"success": False, "message": "Failed to save patient", "error": str(e)}), 500
 
 @app.route('/api/patients/<patient_id_str>', methods=['GET'])
 def get_patient(patient_id_str):
@@ -418,7 +1163,6 @@ def create_analysis():
         except ValueError:
             age = 56
 
-        # 1. Resolve or create Patient
         patient = db_session.query(Patient).filter_by(patient_id=patient_code).first()
         if not patient:
             patient = Patient(
@@ -436,7 +1180,6 @@ def create_analysis():
                 patient.gender = gender
             db_session.commit()
 
-        # 2. Create Analysis record
         analysis = Analysis(
             patient_id=patient.id,
             uploaded_file_name=file_name,
@@ -447,8 +1190,6 @@ def create_analysis():
         db_session.add(analysis)
         db_session.commit()
 
-        # 3. Create AI Analysis Results record
-        # In accordance with Part 7, preserve existing mock values and persist to PostgreSQL
         affected_vessel = data.get('affected_vessel', 'LAD Proximal')
         severity = data.get('severity', 68.00)
         confidence = data.get('confidence', 92.00)
@@ -519,12 +1260,10 @@ def save_doctor_review(analysis_id):
         verified = data.get('verified', True)
         comments = data.get('comments', 'Verified by physician')
 
-        # Check analysis exists
         analysis = db_session.query(Analysis).filter_by(id=analysis_id).first()
         if not analysis:
             return jsonify({"success": False, "message": "Analysis not found"}), 404
 
-        # Check doctor exists; if not provided or doesn't exist, use the first doctor or create default doctor
         doctor = None
         if doctor_id:
             doctor = db_session.query(User).filter_by(id=int(doctor_id)).first()
@@ -534,14 +1273,13 @@ def save_doctor_review(analysis_id):
             doctor = User(
                 name="Dr. Priya Sharma",
                 email="dr.sharma@centralhospital.org",
-                password_hash=generate_password_hash("defaultpass123"),
-                role="doctor",
+                password_hash=generate_password_hash("doctor123"),
+                role="Interventional Cardiology",
                 created_at=datetime.utcnow()
             )
             db_session.add(doctor)
             db_session.commit()
 
-        # Check if a review already exists for this analysis and doctor
         review = db_session.query(DoctorReview).filter_by(analysis_id=analysis_id, doctor_id=doctor.id).first()
         if review:
             review.verified = verified
@@ -621,6 +1359,62 @@ def get_history():
 
 # ----------------- Reports -----------------
 
+@app.route('/api/reports', methods=['GET'])
+def get_all_reports():
+    try:
+        analyses = db_session.query(Analysis).order_by(Analysis.analysis_date.desc()).all()
+        report_list = []
+        for an in analyses:
+            patient = db_session.query(Patient).filter_by(id=an.patient_id).first()
+            result = db_session.query(AnalysisResult).filter_by(analysis_id=an.id).first()
+            review = db_session.query(DoctorReview).filter_by(analysis_id=an.id).first()
+
+            doctor_name = "Dr. Priya Sharma, MD"
+            if review and review.doctor_id:
+                doc = db_session.query(User).filter_by(id=review.doctor_id).first()
+                if doc:
+                    doctor_name = doc.name
+
+            sev_num = float(result.severity) if result and result.severity is not None else 68.0
+            conf_num = float(result.confidence) if result and result.confidence is not None else 92.0
+
+            if sev_num >= 70:
+                sev_label = "Severe"
+            elif sev_num >= 50:
+                sev_label = "Moderate"
+            else:
+                sev_label = "Mild"
+
+            date_str = an.analysis_date.strftime('%B %d, %Y') if an.analysis_date else 'September 21, 2026'
+
+            report_list.append({
+                "analysis_id": an.id,
+                "report_num": f"REPORT #ANG-2026-{an.id:04d}",
+                "date": date_str,
+                "patient_id": patient.patient_id if patient else f"PAT-{an.id:04d}",
+                "patient_name": f"Patient {patient.patient_id if patient else an.id}",
+                "age": patient.age if patient and patient.age else 56,
+                "gender": patient.gender if patient and patient.gender else 'Male',
+                "referring_physician": doctor_name,
+                "modality": "X-Ray Angiography (DICOM)",
+                "projection_angle": "LAO Cranial (35° / 20°)",
+                "indication": "Unstable Angina, NSTEMI Rule-out",
+                "vessel": result.affected_vessel if result and result.affected_vessel else 'LAD Proximal',
+                "stenosis": f"{int(sev_num)}%",
+                "severity": sev_label,
+                "confidence": f"{int(conf_num)}%",
+                "verified": review.verified if review else False,
+                "doctor_name": doctor_name,
+                "file_name": an.uploaded_file_name or "patient_angio.dcm"
+            })
+
+        return jsonify({
+            "success": True,
+            "reports": report_list
+        }), 200
+    except Exception as e:
+        return jsonify({"success": False, "message": "Failed to fetch reports list", "error_type": type(e).__name__}), 500
+
 @app.route('/api/reports/<int:analysis_id>', methods=['GET'])
 @app.route('/api/reports/latest', methods=['GET'])
 def get_report_data(analysis_id=None):
@@ -638,16 +1432,18 @@ def get_report_data(analysis_id=None):
         result = data.get('result') or {}
         review = data.get('review') or {}
 
-        doctor_name = "Dr. Sharma, MD, FACC"
+        doctor_name = "Dr. Priya Sharma, MD, FACC"
         if review and review.get('doctor_id'):
             doc = db_session.query(User).filter_by(id=review['doctor_id']).first()
             if doc:
                 doctor_name = doc.name
 
         report = {
+            "analysis_id": analysis.id,
             "report_num": f"REPORT #ANG-2026-{analysis.id:04d}",
             "date": analysis.analysis_date.strftime('%B %d, %Y') if analysis.analysis_date else 'September 21, 2026',
             "patient_id": patient.get('patient_id', 'PAT-00123'),
+            "patient_name": f"Patient {patient.get('patient_id', 'PAT-00123')}",
             "age": patient.get('age', 56),
             "gender": patient.get('gender', 'Male'),
             "referring_physician": doctor_name,
@@ -667,6 +1463,358 @@ def get_report_data(analysis_id=None):
         }), 200
     except Exception as e:
         return jsonify({"success": False, "message": "Failed to generate report", "error_type": type(e).__name__}), 500
+
+# ----------------- Database Auto-Schema & Seeding -----------------
+
+def init_db_and_seed():
+    try:
+        # Create all tables if they don't exist
+        Base.metadata.create_all(bind=engine)
+
+        # Ensure all columns exist on users table via raw SQL if table already existed
+        with engine.connect() as conn:
+            user_columns_to_add = [
+                ("mobile_number", "VARCHAR"),
+                ("dob", "VARCHAR"),
+                ("registration_number", "VARCHAR"),
+                ("registration_authority", "VARCHAR"),
+                ("medical_degree", "VARCHAR"),
+                ("specialization", "VARCHAR"),
+                ("hospital_name", "VARCHAR"),
+                ("experience_years", "VARCHAR"),
+                ("hospital_id_card", "VARCHAR"),
+                ("professional_address", "TEXT"),
+                ("avatar_url", "TEXT"),
+                ("is_admin", "BOOLEAN DEFAULT FALSE"),
+            ]
+            for col_name, col_type in user_columns_to_add:
+                try:
+                    conn.execute(text(f"ALTER TABLE users ADD COLUMN IF NOT EXISTS {col_name} {col_type};"))
+                    conn.commit()
+                except Exception:
+                    pass
+
+        # Seed 5 default doctor users if none exist
+        existing_user = db_session.query(User).first()
+        if not existing_user:
+            doctors_data = [
+                {
+                    "name": "Dr. Priya Sharma",
+                    "email": "dr.sharma@centralhospital.org",
+                    "role": "Lead Interventional Cardiologist",
+                    "password": "doctor123",
+                    "mobile": "+91 98230 45112",
+                    "dob": "14/08/1982",
+                    "reg_no": "MMC-2007-048291",
+                    "council": "Maharashtra Medical Council",
+                    "degree": "MBBS, MD (Medicine), DM (Cardiology)",
+                    "spec": "Interventional Cardiology",
+                    "hospital": "Ruby Hall Clinic & Central Heart Institute",
+                    "exp": "16 years",
+                    "hosp_id": "RHC-CARD-082",
+                    "address": "40 Sassoon Road, Sangamvadi, Pune, Maharashtra 411001"
+                },
+                {
+                    "name": "Dr. Rajesh Mehta",
+                    "email": "dr.mehta@centralhospital.org",
+                    "role": "Senior Cardiac Electrophysiologist",
+                    "password": "doctor123",
+                    "mobile": "+91 98110 33421",
+                    "dob": "22/11/1978",
+                    "reg_no": "DMC-2003-019284",
+                    "council": "Delhi Medical Council",
+                    "degree": "MBBS, MD, DNB (Cardiology), FACC",
+                    "spec": "Cardiac Electrophysiology & Intervention",
+                    "hospital": "Central Cardiology Institute",
+                    "exp": "20 years",
+                    "hosp_id": "CCI-DIR-012",
+                    "address": "Central Medical Enclave, New Delhi 110029"
+                },
+                {
+                    "name": "Dr. Ananya Iyer",
+                    "email": "dr.iyer@centralhospital.org",
+                    "role": "Consultant Cardiologist & QCA Specialist",
+                    "password": "doctor123",
+                    "mobile": "+91 94440 88219",
+                    "dob": "05/03/1988",
+                    "reg_no": "TNC-2012-094821",
+                    "council": "Tamil Nadu Medical Council",
+                    "degree": "MBBS, MD (General Medicine), DM (Cardiology)",
+                    "spec": "Quantitative Coronary Angiography (QCA)",
+                    "hospital": "Apollo Speciality Cardiology Center",
+                    "exp": "11 years",
+                    "hosp_id": "APL-SPEC-441",
+                    "address": "Greams Road, Thousand Lights, Chennai, Tamil Nadu 600006"
+                },
+                {
+                    "name": "Dr. Vikram Malhotra",
+                    "email": "dr.malhotra@centralhospital.org",
+                    "role": "Associate Professor of Cardiology",
+                    "password": "doctor123",
+                    "mobile": "+91 98720 11942",
+                    "dob": "19/07/1985",
+                    "reg_no": "PMC-2010-062819",
+                    "council": "Punjab Medical Council",
+                    "degree": "MBBS, MD (Medicine), DM (Cardiology)",
+                    "spec": "Complex PCI & Bifurcation Lesions",
+                    "hospital": "Max Super Speciality Hospital",
+                    "exp": "13 years",
+                    "hosp_id": "MAX-CARD-309",
+                    "address": "Phase VI, Mohali, Punjab 160055"
+                },
+                {
+                    "name": "Dr. Sunita Kulkarni",
+                    "email": "dr.kulkarni@centralhospital.org",
+                    "role": "Director of Cath Lab & Interventional Services",
+                    "password": "doctor123",
+                    "mobile": "+91 98220 77410",
+                    "dob": "30/01/1975",
+                    "reg_no": "MMC-1999-031892",
+                    "council": "Maharashtra Medical Council",
+                    "degree": "MBBS, MD, DM (Cardiology), FSCAI",
+                    "spec": "Structural Heart & Coronary Interventions",
+                    "hospital": "Deenanath Mangeshkar Hospital",
+                    "exp": "24 years",
+                    "hosp_id": "DMH-DIR-004",
+                    "address": "Erandwane, Pune, Maharashtra 411004"
+                }
+            ]
+
+            created_doctors = []
+            for doc_info in doctors_data:
+                user = User(
+                    name=doc_info["name"],
+                    email=doc_info["email"],
+                    password_hash=generate_password_hash(doc_info["password"]),
+                    role=doc_info["role"],
+                    mobile_number=doc_info.get("mobile"),
+                    dob=doc_info.get("dob"),
+                    registration_number=doc_info.get("reg_no"),
+                    registration_authority=doc_info.get("council"),
+                    medical_degree=doc_info.get("degree"),
+                    specialization=doc_info.get("spec"),
+                    hospital_name=doc_info.get("hospital"),
+                    experience_years=doc_info.get("exp"),
+                    hospital_id_card=doc_info.get("hosp_id"),
+                    professional_address=doc_info.get("address"),
+                    created_at=datetime.utcnow()
+                )
+                db_session.add(user)
+                created_doctors.append(user)
+            db_session.commit()
+
+            # Seed 5 sample patients & analyses
+            patients_data = [
+                {
+                    "patient_id": "PAT-00123",
+                    "name": "Ramesh Patel",
+                    "age": 56,
+                    "gender": "Male",
+                    "vessel": "LAD Proximal",
+                    "severity": 68.0,
+                    "confidence": 92.0,
+                    "region": "Proximal segment of LAD",
+                    "file_name": "patient_001_angio.dcm",
+                    "verified": True,
+                    "doctor_idx": 0,
+                    "comments": "Physician verified - significant 68% stenosis in proximal LAD"
+                },
+                {
+                    "patient_id": "PAT-00120",
+                    "name": "Sunita Rao",
+                    "age": 62,
+                    "gender": "Female",
+                    "vessel": "RCA Mid",
+                    "severity": 85.0,
+                    "confidence": 95.0,
+                    "region": "Mid segment of Right Coronary Artery",
+                    "file_name": "patient_002_angio.dcm",
+                    "verified": True,
+                    "doctor_idx": 1,
+                    "comments": "Severe 85% mid-RCA lesion. Primary PCI recommended."
+                },
+                {
+                    "patient_id": "PAT-00118",
+                    "name": "Anil Verma",
+                    "age": 49,
+                    "gender": "Male",
+                    "vessel": "LCx Distal",
+                    "severity": 35.0,
+                    "confidence": 88.0,
+                    "region": "Distal Left Circumflex branch",
+                    "file_name": "patient_003_angio.dcm",
+                    "verified": False,
+                    "doctor_idx": 2,
+                    "comments": "Mild non-obstructive CAD. Medical management indicated."
+                },
+                {
+                    "patient_id": "PAT-00115",
+                    "name": "Kavita Menon",
+                    "age": 58,
+                    "gender": "Female",
+                    "vessel": "LAD Mid",
+                    "severity": 72.0,
+                    "confidence": 94.0,
+                    "region": "Mid segment of LAD after 1st diagonal",
+                    "file_name": "patient_004_angio.dcm",
+                    "verified": True,
+                    "doctor_idx": 0,
+                    "comments": "Physiologically significant mid-LAD stenosis. FFR 0.73."
+                },
+                {
+                    "patient_id": "PAT-00112",
+                    "name": "Vikram Singh",
+                    "age": 67,
+                    "gender": "Male",
+                    "vessel": "LMCA Bifurcation",
+                    "severity": 45.0,
+                    "confidence": 90.0,
+                    "region": "Left Main bifurcation into LAD/LCx",
+                    "file_name": "patient_005_angio.dcm",
+                    "verified": False,
+                    "doctor_idx": 3,
+                    "comments": "Moderate bifurcation plaque. IVUS assessment scheduled."
+                }
+            ]
+
+            for p_info in patients_data:
+                patient = Patient(
+                    patient_id=p_info["patient_id"],
+                    age=p_info["age"],
+                    gender=p_info["gender"],
+                    created_at=datetime.utcnow()
+                )
+                db_session.add(patient)
+                db_session.commit()
+
+                analysis = Analysis(
+                    patient_id=patient.id,
+                    uploaded_file_name=p_info["file_name"],
+                    file_path=f"data/sample_images/{p_info['file_name']}",
+                    analysis_date=datetime.utcnow(),
+                    status="completed"
+                )
+                db_session.add(analysis)
+                db_session.commit()
+
+                result = AnalysisResult(
+                    analysis_id=analysis.id,
+                    affected_vessel=p_info["vessel"],
+                    severity=p_info["severity"],
+                    confidence=p_info["confidence"],
+                    detected_region=p_info["region"],
+                    model_version="v1.0.0-qca",
+                    created_at=datetime.utcnow()
+                )
+                db_session.add(result)
+
+                doc_user = created_doctors[p_info["doctor_idx"]]
+                review = DoctorReview(
+                    analysis_id=analysis.id,
+                    doctor_id=doc_user.id,
+                    verified=p_info["verified"],
+                    comments=p_info["comments"],
+                    reviewed_at=datetime.utcnow()
+                )
+                db_session.add(review)
+                db_session.commit()
+
+        # Seed sample Doctor Verification Applications if table is empty
+        existing_apps = db_session.query(DoctorApplication).first()
+        if not existing_apps:
+            sample_apps = [
+                {
+                    "full_name": "Dr. Rahul Sharma",
+                    "email": "dr.rahul.sharma@cardiacpulse.in",
+                    "mobile_number": "+91 98765 43210",
+                    "dob": "12/06/1986",
+                    "registration_number": "MMC-2011-094182",
+                    "registration_authority": "Maharashtra Medical Council",
+                    "medical_degree": "MBBS, MD, DM (Cardiology)",
+                    "specialization": "Interventional Cardiology",
+                    "hospital_name": "Ruby Hall Clinic & Heart Center",
+                    "experience_years": "8 years",
+                    "hospital_id_card": "H12345",
+                    "professional_address": "Ruby Hall Clinic, Bund Garden Road, Pune - 411001",
+                    "status": "pending"
+                },
+                {
+                    "full_name": "Dr. Sneha Deshmukh",
+                    "email": "dr.sneha.deshmukh@careheart.org",
+                    "mobile_number": "+91 97654 32109",
+                    "dob": "28/09/1989",
+                    "registration_number": "KMC-2015-081293",
+                    "registration_authority": "Karnataka Medical Council",
+                    "medical_degree": "MBBS, DNB (General Medicine), DNB (Cardiology)",
+                    "specialization": "Clinical & Preventive Cardiology",
+                    "hospital_name": "Manipal Heart Institute",
+                    "experience_years": "6 years",
+                    "hospital_id_card": "MAN-CARD-119",
+                    "professional_address": "Old Airport Road, Kodihalli, Bengaluru - 560017",
+                    "status": "pending"
+                },
+                {
+                    "full_name": "Dr. Arvind Swaminathan",
+                    "email": "dr.arvind@metrocath.org",
+                    "mobile_number": "+91 98401 22334",
+                    "dob": "15/04/1980",
+                    "registration_number": "TNC-2005-039182",
+                    "registration_authority": "Tamil Nadu Medical Council",
+                    "medical_degree": "MBBS, MD, DM (Cardiology), FACC",
+                    "specialization": "Complex Coronary Angioplasty & Imaging",
+                    "hospital_name": "Madras Medical Mission Hospital",
+                    "experience_years": "18 years",
+                    "hospital_id_card": "MMM-DIR-009",
+                    "professional_address": "4-A, Dr. J.J. Nagar, Mogappair, Chennai - 600037",
+                    "status": "approved"
+                }
+            ]
+
+            for a_info in sample_apps:
+                app_entry = DoctorApplication(
+                    full_name=a_info["full_name"],
+                    email=a_info["email"],
+                    mobile_number=a_info["mobile_number"],
+                    dob=a_info["dob"],
+                    registration_number=a_info["registration_number"],
+                    registration_authority=a_info["registration_authority"],
+                    medical_degree=a_info["medical_degree"],
+                    specialization=a_info["specialization"],
+                    hospital_name=a_info["hospital_name"],
+                    experience_years=a_info["experience_years"],
+                    hospital_id_card=a_info["hospital_id_card"],
+                    professional_address=a_info["professional_address"],
+                    status=a_info["status"],
+                    created_at=datetime.utcnow()
+                )
+                db_session.add(app_entry)
+            db_session.commit()
+
+        print("Database schema verified, doctor accounts, applications, and sample analyses initialized.")
+    except Exception as e:
+        db_session.rollback()
+        print(f"Warning: Database initialization encountered notice/error: {e}")
+
+@app.route('/api/init-db', methods=['POST', 'GET'])
+def api_init_db():
+    try:
+        init_db_and_seed()
+        return jsonify({
+            "success": True,
+            "message": "Database tables and seeded applications created successfully"
+        }), 200
+    except Exception as e:
+        return jsonify({
+            "success": False,
+            "message": "Failed to initialize database",
+            "error": str(e)
+        }), 500
+
+# Run database setup on startup
+try:
+    init_db_and_seed()
+except Exception as e:
+    print(f"Initial DB check: {e}")
 
 if __name__ == '__main__':
     debug_mode = FLASK_ENV == 'development'

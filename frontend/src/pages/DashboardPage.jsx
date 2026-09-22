@@ -1,7 +1,7 @@
 import React from 'react';
 import { 
   UploadCloud, 
-  Stethoscope, 
+  BarChart2, 
   FileText, 
   Clock, 
   BookOpen, 
@@ -13,6 +13,7 @@ import heartImg from '../assets/images/heart-illustration.png';
 
 export default function DashboardPage({ onNavigate }) {
   const cards = [
+    // Row 1
     {
       icon: UploadCloud,
       title: 'Upload Angiogram',
@@ -20,8 +21,8 @@ export default function DashboardPage({ onNavigate }) {
       path: '/upload'
     },
     {
-      icon: Stethoscope,
-      title: 'Analyze',
+      icon: BarChart2,
+      title: 'Results',
       description: 'AI detects vessels, identifies narrowing, and estimates severity.',
       path: '/results'
     },
@@ -31,22 +32,23 @@ export default function DashboardPage({ onNavigate }) {
       description: 'See highlighted vessels, narrowing regions, and detailed analysis report.',
       path: '/reports'
     },
+    // Row 2
     {
-      icon: Clock,
-      title: 'History',
-      description: 'Access your previous analyses anytime.',
+      icon: Users,
+      title: 'Manage Patients',
+      description: 'View and manage patient clinical records and history.',
       path: '/history'
     },
     {
       icon: BookOpen,
       title: 'Resources',
-      description: 'Explore guides, FAQs and documentation.',
+      description: 'Explore guides, anatomical maps, FAQs and documentation.',
       path: '/resources'
     },
     {
-      icon: Users,
-      title: 'Manage Patients',
-      description: 'View and manage patient records.',
+      icon: Clock,
+      title: 'History',
+      description: 'Access and audit your previous angiogram evaluations anytime.',
       path: '/history'
     }
   ];

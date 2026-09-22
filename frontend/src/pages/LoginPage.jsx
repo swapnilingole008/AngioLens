@@ -1,135 +1,461 @@
 import React, { useState } from 'react';
-import { Mail, Lock, ArrowRight } from 'lucide-react';
+import { 
+  Mail, 
+  Lock, 
+  ArrowRight, 
+  ShieldCheck, 
+  UserPlus, 
+  FileCheck2, 
+  KeyRound, 
+  CheckCircle2, 
+  AlertCircle, 
+  Loader2, 
+  X,
+  Stethoscope,
+  Building2
+} from 'lucide-react';
 import heartImg from '../assets/images/heart-illustration.png';
 import api from '../api';
+import DoctorApplicationModal from './DoctorApplicationModal';
 
 export default function LoginPage({ onNavigate }) {
-  const [email, setEmail] = useState('sharma@angiolens.com');
-  const [password, setPassword] = useState('');
+  const [email, setEmail] = useState('dr.sharma@centralhospital.org');
+  const [password, setPassword] = useState('doctor123');
   const [errorMsg, setErrorMsg] = useState('');
   const [loading, setLoading] = useState(false);
 
-  const handleSubmit = async (e) => {
+  // Application Modal state
+  const [isAppModalOpen, setIsAppModalOpen] = useState(false);
+
+  // Forgot Password / OTP Modal state
+  const [isForgotModalOpen, setIsForgotModalOpen] = useState(false);
+  const [forgotStep, setForgotStep] = useState(1); // 1: Enter Email | 2: Enter OTP & New Password | 3: Success
+  const [forgotEmail, setForgotEmail] = useState('');
+  const [otpCode, setOtpCode] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [forgotLoading, setForgotLoading] = useState(false);
+  const [forgotError, setForgotError] = useState('');
+  const [forgotSuccessMsg, setForgotSuccessMsg] = useState('');
+
+  const handleLoginSubmit = async (e) => {
     e.preventDefault();
     setErrorMsg('');
     setLoading(true);
     try {
       await api.login({ email, password });
-      onNavigate('/dashboard');
+      onNavigate('/');
     } catch (err) {
-      setErrorMsg(err.message || 'Login failed. Please check credentials.');
+      setErrorMsg(err.message || 'Login failed. Please check your credentials.');
     } finally {
       setLoading(false);
     }
   };
 
+  // Forgot Password Step 1: Request OTP
+  const handleRequestOtp = async (e) => {
+    e.preventDefault();
+    setForgotError('');
+    if (!forgotEmail.trim() || !forgotEmail.includes('@')) {
+      setForgotError('Please enter a valid email address.');
+      return;
+    }
+
+    setForgotLoading(true);
+    try {
+      const res = await api.forgotPassword(forgotEmail);
+      if (res.success) {
+        setForgotStep(2);
+        setForgotSuccessMsg(res.message || '6-digit OTP code has been sent to your email.');
+      } else {
+        setForgotError(res.message || 'Failed to request OTP');
+      }
+    } catch (err) {
+      setForgotError(err.message || 'Error communicating with authentication server.');
+    } finally {
+      setForgotLoading(false);
+    }
+  };
+
+  // Forgot Password Step 2: Verify OTP & Reset Password
+  const handleResetPasswordSubmit = async (e) => {
+    e.preventDefault();
+    setForgotError('');
+
+    if (!otpCode.trim() || otpCode.length < 6) {
+      setForgotError('Please enter the 6-digit verification code.');
+      return;
+    }
+    if (newPassword.length < 4) {
+      setForgotError('Password must be at least 4 characters.');
+      return;
+    }
+    if (newPassword !== confirmPassword) {
+      setForgotError('Passwords do not match.');
+      return;
+    }
+
+    setForgotLoading(true);
+    try {
+      const res = await api.resetPassword({
+        email: forgotEmail,
+        otp_code: otpCode.trim(),
+        new_password: newPassword,
+      });
+
+      if (res.success) {
+        setForgotStep(3);
+        setPassword(newPassword);
+        setEmail(forgotEmail);
+      } else {
+        setForgotError(res.message || 'Failed to reset password');
+      }
+    } catch (err) {
+      setForgotError(err.message || 'Invalid or expired OTP code.');
+    } finally {
+      setForgotLoading(false);
+    }
+  };
+
+  const closeForgotModal = () => {
+    setIsForgotModalOpen(false);
+    setForgotStep(1);
+    setForgotEmail('');
+    setOtpCode('');
+    setNewPassword('');
+    setConfirmPassword('');
+    setForgotError('');
+    setForgotSuccessMsg('');
+  };
+
   return (
     <div className="auth-page-container">
-      <div className="angio-card auth-card-split">
-        {/* Left Visual Branding Panel */}
-        <div className="auth-left-branding">
-          <div className="auth-brand-logo">
-            <div className="logo-badge">
-              <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" strokeWidth="2.2">
-                <path d="M19 14c1.49-1.46 3-3.21 3-5.5A5.5 5.5 0 0 0 16.5 3c-1.76 0-3 .5-4.5 2-1.5-1.5-2.74-2-4.5-2A5.5 5.5 0 0 0 2 8.5c0 2.3 1.5 4.05 3 5.5l7 7Z" fill="#FFFFFF" stroke="#FFFFFF" />
-                <path d="M3 12h4l2-4 3 8 2-4h4" stroke="#851036" strokeWidth="2" />
+      <div className="auth-cards-wrapper">
+        <div className="angio-card auth-card-split">
+          {/* Left Visual Branding Panel */}
+          <div className="auth-left-branding">
+            <div className="auth-brand-logo">
+              <div className="logo-badge">
+                <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" strokeWidth="2.2">
+                  <path d="M19 14c1.49-1.46 3-3.21 3-5.5A5.5 5.5 0 0 0 16.5 3c-1.76 0-3 .5-4.5 2-1.5-1.5-2.74-2-4.5-2A5.5 5.5 0 0 0 2 8.5c0 2.3 1.5 4.05 3 5.5l7 7Z" fill="#FFFFFF" stroke="#FFFFFF" />
+                  <path d="M3 12h4l2-4 3 8 2-4h4" stroke="#851036" strokeWidth="2" />
+                </svg>
+              </div>
+              <div>
+                <span className="brand-name">AngioLens</span>
+                <span className="brand-sub">Coronary Vessel Analyzer</span>
+              </div>
+            </div>
+
+            <div className="auth-heart-center">
+              <div className="heart-wrapper">
+                <img src={heartImg} alt="Anatomical Heart Graphic" className="auth-heart-img" />
+              </div>
+              <svg className="auth-ecg-svg" viewBox="0 0 260 40">
+                <path
+                  d="M 0,20 L 70,20 L 78,8 L 86,32 L 94,2 L 102,28 L 110,20 L 260,20"
+                  fill="none"
+                  stroke="#851036"
+                  strokeWidth="2.5"
+                  strokeLinecap="round"
+                />
               </svg>
             </div>
-            <div>
-              <span className="brand-name">AngioLens</span>
-              <span className="brand-sub">Coronary Vessel Analyzer</span>
+
+            <div className="auth-quote-block">
+              <p className="auth-script-quote">"Better insights. Healthier hearts."</p>
+              <div className="quote-underline"></div>
+              <p className="auth-caption">
+                AI-driven vessel segmentation, caliber profiling, and clinical decision support for cath lab teams.
+              </p>
             </div>
           </div>
 
-          <div className="auth-heart-center">
-            <div className="heart-wrapper">
-              <img src={heartImg} alt="Anatomical Heart Graphic" className="auth-heart-img" />
+          {/* Right Form Card */}
+          <div className="auth-right-form">
+            <div className="form-header">
+              <h2 className="form-title">Physician Sign In</h2>
+              <p className="form-subtitle">Access your verified clinical workstation</p>
+              {errorMsg && (
+                <div className="auth-error-banner">
+                  <AlertCircle size={15} />
+                  <span>{errorMsg}</span>
+                </div>
+              )}
             </div>
-            <svg className="auth-ecg-svg" viewBox="0 0 260 40">
-              <path
-                d="M 0,20 L 70,20 L 78,8 L 86,32 L 94,2 L 102,28 L 110,20 L 260,20"
-                fill="none"
-                stroke="#851036"
-                strokeWidth="2.5"
-                strokeLinecap="round"
-              />
-            </svg>
-          </div>
 
-          <div className="auth-quote-block">
-            <p className="auth-script-quote">"Better insights. Healthier hearts."</p>
-            <div className="quote-underline"></div>
-            <p className="auth-caption">
-              AI-driven vessel segmentation, caliber profiling, and clinical decision support for cath lab teams.
-            </p>
+            <form onSubmit={handleLoginSubmit} className="login-form">
+              <div className="input-field-group">
+                <label className="field-label">Doctor Email / Username</label>
+                <div className="input-with-icon">
+                  <Mail size={17} className="input-icon" />
+                  <input
+                    type="email"
+                    required
+                    className="auth-input"
+                    placeholder="dr.sharma@hospital.org"
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                  />
+                </div>
+              </div>
+
+              <div className="input-field-group">
+                <label className="field-label">Password</label>
+                <div className="input-with-icon">
+                  <Lock size={17} className="input-icon" />
+                  <input
+                    type="password"
+                    required
+                    className="auth-input"
+                    placeholder="••••••••••••"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                  />
+                </div>
+              </div>
+
+              <div className="options-row">
+                <label className="checkbox-label">
+                  <input type="checkbox" defaultChecked className="remember-checkbox" />
+                  <span>Remember me</span>
+                </label>
+                <button 
+                  type="button" 
+                  className="forgot-link"
+                  onClick={() => setIsForgotModalOpen(true)}
+                >
+                  Forgot password?
+                </button>
+              </div>
+
+              <button type="submit" className="btn-burgundy submit-btn" disabled={loading}>
+                {loading ? (
+                  <>
+                    <Loader2 size={16} className="spinner" />
+                    <span>Signing in...</span>
+                  </>
+                ) : (
+                  <>
+                    <span>Sign In to Workstation</span>
+                    <ArrowRight size={16} />
+                  </>
+                )}
+              </button>
+            </form>
+
+            <div className="demo-credentials-note">
+              <span><strong>Pre-seeded Doctor Login:</strong> <code>dr.sharma@centralhospital.org</code> • Pass: <code>doctor123</code></span>
+            </div>
           </div>
         </div>
 
-        {/* Right Form Card */}
-        <div className="auth-right-form">
-          <div className="form-header">
-            <h2 className="form-title">Welcome Back</h2>
-            <p className="form-subtitle">Sign in to continue to AngioLens</p>
-            {errorMsg && (
-              <div style={{ color: '#DC2626', fontSize: '13px', background: '#FEF2F2', border: '1px solid #FECACA', padding: '8px 12px', borderRadius: '6px', marginTop: '12px' }}>
-                {errorMsg}
-              </div>
-            )}
+        {/* SIDE CARD: Doctor Verification Application */}
+        <div className="angio-card doctor-apply-side-card">
+          <div className="apply-side-header">
+            <div className="apply-shield-icon">
+              <ShieldCheck size={28} />
+            </div>
+            <div>
+              <h3 className="apply-side-title">New Doctor Access</h3>
+              <p className="apply-side-sub">Apply for Medical Verification</p>
+            </div>
           </div>
 
-          <form onSubmit={handleSubmit} className="login-form">
-            <div className="input-field-group">
-              <label className="field-label">Email Address</label>
-              <div className="input-with-icon">
-                <Mail size={17} className="input-icon" />
-                <input
-                  type="email"
-                  required
-                  className="auth-input"
-                  placeholder="name@hospital.org"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                />
-              </div>
+          <p className="apply-side-desc">
+            Are you a licensed cardiologist or cath lab physician? Submit your Medical Council Registration and institutional affiliation to join AngioLens.
+          </p>
+
+          <div className="apply-checklist">
+            <div className="check-item">
+              <CheckCircle2 size={15} color="#059669" />
+              <span>Medical Registration Certificate (MCI/MMC)</span>
             </div>
-
-            <div className="input-field-group">
-              <label className="field-label">Password</label>
-              <div className="input-with-icon">
-                <Lock size={17} className="input-icon" />
-                <input
-                  type="password"
-                  required
-                  className="auth-input"
-                  placeholder="••••••••••••"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                />
-              </div>
+            <div className="check-item">
+              <CheckCircle2 size={15} color="#059669" />
+              <span>Medical Degree (MBBS/MD/DM)</span>
             </div>
-
-            <div className="options-row">
-              <label className="checkbox-label">
-                <input type="checkbox" defaultChecked className="remember-checkbox" />
-                <span>Remember me</span>
-              </label>
-              <button type="button" className="forgot-link">Forgot password?</button>
+            <div className="check-item">
+              <CheckCircle2 size={15} color="#059669" />
+              <span>Hospital & Institutional Association</span>
             </div>
+            <div className="check-item">
+              <CheckCircle2 size={15} color="#059669" />
+              <span>Instant SMTP Email Dispatch & Approval</span>
+            </div>
+          </div>
 
-            <button type="submit" className="btn-burgundy submit-btn">
-              <span>Sign In</span>
-              <ArrowRight size={16} />
-            </button>
-          </form>
+          <button 
+            type="button" 
+            className="btn-burgundy apply-modal-trigger-btn"
+            onClick={() => setIsAppModalOpen(true)}
+          >
+            <UserPlus size={16} />
+            <span>Apply for Doctor Verification</span>
+          </button>
 
-          <div className="switch-auth-row">
-            <span>Don't have an account?</span>
-            <button className="switch-link" onClick={() => onNavigate('/signup')}>
-              Create Account
+          <div className="admin-link-row">
+            <span>Medical Review Board?</span>
+            <button className="admin-portal-link" onClick={() => onNavigate('/admin')}>
+              Open Admin Portal →
             </button>
           </div>
         </div>
       </div>
+
+      {/* DOCTOR REGISTRATION APPLICATION MODAL */}
+      <DoctorApplicationModal 
+        isOpen={isAppModalOpen} 
+        onClose={() => setIsAppModalOpen(false)} 
+      />
+
+      {/* FORGOT PASSWORD / OTP MODAL */}
+      {isForgotModalOpen && (
+        <div className="forgot-modal-overlay">
+          <div className="forgot-modal-card">
+            <div className="forgot-modal-header">
+              <div className="header-icon-title">
+                <KeyRound size={20} className="text-burgundy" />
+                <h3>Reset Physician Password</h3>
+              </div>
+              <button className="forgot-close-btn" onClick={closeForgotModal}>
+                <X size={18} />
+              </button>
+            </div>
+
+            <div className="forgot-modal-body">
+              {forgotError && (
+                <div className="forgot-error-alert">
+                  <AlertCircle size={15} />
+                  <span>{forgotError}</span>
+                </div>
+              )}
+
+              {/* STEP 1: Enter Email */}
+              {forgotStep === 1 && (
+                <form onSubmit={handleRequestOtp} className="forgot-form">
+                  <p className="forgot-instruction">
+                    Enter the email address associated with your doctor account. We will dispatch a <strong>6-digit OTP verification code</strong> via SMTP.
+                  </p>
+
+                  <div className="form-group">
+                    <label>Registered Email Address</label>
+                    <div className="input-with-icon">
+                      <Mail size={16} className="input-icon" />
+                      <input
+                        type="email"
+                        placeholder="e.g. dr.sharma@centralhospital.org"
+                        value={forgotEmail}
+                        onChange={(e) => setForgotEmail(e.target.value)}
+                        required
+                        className="auth-input"
+                      />
+                    </div>
+                  </div>
+
+                  <button type="submit" className="btn-burgundy forgot-submit-btn" disabled={forgotLoading}>
+                    {forgotLoading ? (
+                      <>
+                        <Loader2 size={16} className="spinner" />
+                        <span>Sending OTP...</span>
+                      </>
+                    ) : (
+                      <>
+                        <span>Send 6-Digit OTP</span>
+                        <ArrowRight size={15} />
+                      </>
+                    )}
+                  </button>
+                </form>
+              )}
+
+              {/* STEP 2: Enter OTP & New Password */}
+              {forgotStep === 2 && (
+                <form onSubmit={handleResetPasswordSubmit} className="forgot-form">
+                  {forgotSuccessMsg && (
+                    <div className="forgot-info-alert">
+                      <CheckCircle2 size={15} color="#059669" />
+                      <span>{forgotSuccessMsg}</span>
+                    </div>
+                  )}
+
+                  <div className="form-group">
+                    <label>Enter 6-Digit OTP Code</label>
+                    <input
+                      type="text"
+                      maxLength={6}
+                      placeholder="e.g. 849201"
+                      value={otpCode}
+                      onChange={(e) => setOtpCode(e.target.value)}
+                      className="auth-input otp-input-field"
+                      required
+                    />
+                    <small className="field-hint">Check your email inbox or spam folder.</small>
+                  </div>
+
+                  <div className="form-group">
+                    <label>New Password</label>
+                    <div className="input-with-icon">
+                      <Lock size={16} className="input-icon" />
+                      <input
+                        type="password"
+                        placeholder="••••••••••••"
+                        value={newPassword}
+                        onChange={(e) => setNewPassword(e.target.value)}
+                        required
+                        className="auth-input"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="form-group">
+                    <label>Confirm New Password</label>
+                    <div className="input-with-icon">
+                      <Lock size={16} className="input-icon" />
+                      <input
+                        type="password"
+                        placeholder="••••••••••••"
+                        value={confirmPassword}
+                        onChange={(e) => setConfirmPassword(e.target.value)}
+                        required
+                        className="auth-input"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="forgot-btn-row">
+                    <button type="button" className="btn-back-step" onClick={() => setForgotStep(1)}>
+                      ← Change Email
+                    </button>
+                    <button type="submit" className="btn-burgundy forgot-submit-btn" disabled={forgotLoading}>
+                      {forgotLoading ? (
+                        <>
+                          <Loader2 size={16} className="spinner" />
+                          <span>Resetting...</span>
+                        </>
+                      ) : (
+                        <span>Confirm & Reset Password</span>
+                      )}
+                    </button>
+                  </div>
+                </form>
+              )}
+
+              {/* STEP 3: Success Confirmation */}
+              {forgotStep === 3 && (
+                <div className="forgot-success-box">
+                  <CheckCircle2 size={44} color="#059669" />
+                  <h4>Password Reset Successfully!</h4>
+                  <p>Your password has been updated. You can now sign in using your new password.</p>
+                  <button className="btn-burgundy" onClick={closeForgotModal}>
+                    Proceed to Sign In
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       <style>{`
         .auth-page-container {
@@ -142,21 +468,29 @@ export default function LoginPage({ onNavigate }) {
           padding: 24px;
         }
 
-        .auth-card-split {
+        .auth-cards-wrapper {
+          display: flex;
+          align-items: stretch;
+          gap: 24px;
+          max-width: 1240px;
           width: 100%;
-          max-width: 960px;
+        }
+
+        .auth-card-split {
+          flex: 1.6;
           display: grid;
           grid-template-columns: 1fr 1.15fr;
           overflow: hidden;
           background: #FFFFFF;
           border: 1.5px solid var(--burgundy-border);
           box-shadow: 0 12px 36px -4px rgba(133, 16, 54, 0.1);
+          border-radius: 12px;
         }
 
         .auth-left-branding {
           background-color: #FAF1F3;
           border-right: 1px solid var(--burgundy-border);
-          padding: 44px 36px;
+          padding: 40px 32px;
           display: flex;
           flex-direction: column;
           justify-content: space-between;
@@ -186,14 +520,14 @@ export default function LoginPage({ onNavigate }) {
           display: flex;
           flex-direction: column;
           align-items: center;
-          margin: 24px 0;
+          margin: 20px 0;
           position: relative;
         }
 
         .heart-wrapper {
-          width: 130px;
-          height: 130px;
-          margin-bottom: 8px;
+          width: 120px;
+          height: 120px;
+          margin-bottom: 6px;
         }
 
         .auth-heart-img {
@@ -205,58 +539,72 @@ export default function LoginPage({ onNavigate }) {
         }
 
         .auth-ecg-svg {
-          width: 200px;
-          height: 32px;
+          width: 180px;
+          height: 30px;
         }
 
         .auth-quote-block {
           display: flex;
           flex-direction: column;
-          gap: 6px;
+          gap: 4px;
         }
 
         .auth-script-quote {
           font-family: var(--font-script);
-          font-size: 26px;
+          font-size: 24px;
           font-weight: 700;
           color: var(--burgundy-primary);
         }
 
         .auth-caption {
-          font-size: 12px;
+          font-size: 11.5px;
           color: var(--text-secondary);
           line-height: 1.45;
-          margin-top: 6px;
+          margin-top: 4px;
         }
 
         .auth-right-form {
-          padding: 48px 42px;
+          padding: 40px 36px;
           display: flex;
           flex-direction: column;
           justify-content: center;
         }
 
         .form-header {
-          margin-bottom: 28px;
+          margin-bottom: 22px;
         }
 
         .form-title {
-          font-size: 28px;
+          font-size: 26px;
           font-weight: 800;
           color: var(--text-main);
           letter-spacing: -0.5px;
+          margin: 0;
         }
 
         .form-subtitle {
-          font-size: 13.5px;
+          font-size: 13px;
           color: var(--text-secondary);
-          margin-top: 6px;
+          margin-top: 4px;
+        }
+
+        .auth-error-banner {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          color: #DC2626;
+          font-size: 12.5px;
+          background: #FEF2F2;
+          border: 1px solid #FECACA;
+          padding: 8px 12px;
+          border-radius: 6px;
+          margin-top: 12px;
         }
 
         .login-form {
           display: flex;
           flex-direction: column;
-          gap: 18px;
+          gap: 16px;
         }
 
         .input-field-group {
@@ -266,8 +614,8 @@ export default function LoginPage({ onNavigate }) {
         }
 
         .field-label {
-          font-size: 12.5px;
-          font-weight: 600;
+          font-size: 12px;
+          font-weight: 700;
           color: var(--text-secondary);
         }
 
@@ -286,11 +634,11 @@ export default function LoginPage({ onNavigate }) {
 
         .auth-input {
           width: 100%;
-          padding: 11px 14px 11px 40px;
+          padding: 10px 14px 10px 38px;
           background: #FAF2F4;
           border: 1px solid #F1D4DC;
           border-radius: var(--radius-sm);
-          font-size: 13.5px;
+          font-size: 13px;
           font-family: inherit;
           color: var(--text-main);
           outline: none;
@@ -307,13 +655,13 @@ export default function LoginPage({ onNavigate }) {
           display: flex;
           justify-content: space-between;
           align-items: center;
-          font-size: 12.5px;
+          font-size: 12px;
         }
 
         .checkbox-label {
           display: flex;
           align-items: center;
-          gap: 8px;
+          gap: 6px;
           color: var(--text-secondary);
           cursor: pointer;
         }
@@ -326,8 +674,8 @@ export default function LoginPage({ onNavigate }) {
           background: transparent;
           border: none;
           color: var(--burgundy-primary);
-          font-weight: 600;
-          font-size: 12.5px;
+          font-weight: 700;
+          font-size: 12px;
           cursor: pointer;
         }
 
@@ -337,39 +685,305 @@ export default function LoginPage({ onNavigate }) {
 
         .submit-btn {
           width: 100%;
-          padding: 12px;
-          font-size: 15px;
+          padding: 11px;
+          font-size: 14px;
           border-radius: var(--radius-sm);
-          margin-top: 8px;
+          margin-top: 6px;
           display: flex;
           justify-content: center;
           gap: 8px;
         }
 
-        .switch-auth-row {
+        .demo-credentials-note {
+          margin-top: 18px;
+          background: #FAF1F3;
+          border-left: 3px solid var(--burgundy-primary);
+          padding: 8px 12px;
+          border-radius: 4px;
+          font-size: 11.5px;
+          color: var(--text-main);
+        }
+
+        .demo-credentials-note code {
+          background: #FFFFFF;
+          padding: 1px 4px;
+          border-radius: 3px;
+          color: var(--burgundy-primary);
+          font-weight: bold;
+        }
+
+        /* SIDE CARD: Doctor Verification Application */
+        .doctor-apply-side-card {
+          flex: 1;
+          background: #FFFFFF;
+          border: 1.5px solid var(--burgundy-border);
+          border-radius: 12px;
+          padding: 36px 30px;
+          display: flex;
+          flex-direction: column;
+          justify-content: space-between;
+          box-shadow: 0 12px 36px -4px rgba(133, 16, 54, 0.1);
+        }
+
+        .apply-side-header {
+          display: flex;
+          align-items: center;
+          gap: 12px;
+          margin-bottom: 12px;
+        }
+
+        .apply-shield-icon {
+          width: 48px;
+          height: 48px;
+          background: #FAF1F3;
+          color: var(--burgundy-primary);
+          border-radius: 12px;
           display: flex;
           align-items: center;
           justify-content: center;
-          gap: 6px;
-          margin-top: 24px;
-          font-size: 13px;
-          color: var(--text-secondary);
+          flex-shrink: 0;
         }
 
-        .switch-link {
+        .apply-side-title {
+          font-size: 19px;
+          font-weight: 800;
+          color: var(--text-main);
+          margin: 0;
+        }
+
+        .apply-side-sub {
+          font-size: 12px;
+          font-weight: 600;
+          color: var(--burgundy-primary);
+          margin: 2px 0 0 0;
+        }
+
+        .apply-side-desc {
+          font-size: 12.5px;
+          color: var(--text-secondary);
+          line-height: 1.5;
+          margin: 0 0 18px 0;
+        }
+
+        .apply-checklist {
+          background: #FCF8F9;
+          border: 1px solid #F3DBE2;
+          border-radius: 8px;
+          padding: 14px 16px;
+          display: flex;
+          flex-direction: column;
+          gap: 10px;
+          margin-bottom: 22px;
+        }
+
+        .check-item {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          font-size: 12px;
+          font-weight: 600;
+          color: var(--text-main);
+        }
+
+        .apply-modal-trigger-btn {
+          width: 100%;
+          padding: 12px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          gap: 8px;
+          font-size: 14px;
+        }
+
+        .admin-link-row {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          padding-top: 16px;
+          margin-top: 16px;
+          border-top: 1px solid #F4DFE5;
+          font-size: 12px;
+          color: var(--text-muted);
+        }
+
+        .admin-portal-link {
           background: transparent;
           border: none;
           color: var(--burgundy-primary);
           font-weight: 700;
-          font-size: 13px;
+          font-size: 12px;
           cursor: pointer;
         }
 
-        .switch-link:hover {
+        .admin-portal-link:hover {
           text-decoration: underline;
         }
 
-        @media (max-width: 800px) {
+        /* Forgot Password Modal */
+        .forgot-modal-overlay {
+          position: fixed;
+          top: 0;
+          left: 0;
+          right: 0;
+          bottom: 0;
+          background: rgba(15, 10, 12, 0.65);
+          backdrop-filter: blur(4px);
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          z-index: 9999;
+          padding: 20px;
+        }
+
+        .forgot-modal-card {
+          background: #FFFFFF;
+          border-radius: 12px;
+          width: 100%;
+          max-width: 460px;
+          overflow: hidden;
+          box-shadow: 0 20px 40px rgba(0,0,0,0.2);
+          border: 1px solid var(--burgundy-border);
+        }
+
+        .forgot-modal-header {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          padding: 16px 20px;
+          background: #FAF1F3;
+          border-bottom: 1px solid var(--burgundy-border);
+        }
+
+        .header-icon-title {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+        }
+
+        .header-icon-title h3 {
+          margin: 0;
+          font-size: 16px;
+          font-weight: 800;
+          color: var(--text-main);
+        }
+
+        .forgot-close-btn {
+          background: transparent;
+          border: none;
+          color: var(--text-muted);
+          cursor: pointer;
+          padding: 4px;
+        }
+
+        .forgot-modal-body {
+          padding: 22px;
+        }
+
+        .forgot-instruction {
+          font-size: 13px;
+          color: var(--text-secondary);
+          line-height: 1.5;
+          margin: 0 0 16px 0;
+        }
+
+        .forgot-error-alert {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          background: #FEE2E2;
+          color: #991B1B;
+          padding: 10px 14px;
+          border-radius: 6px;
+          font-size: 12.5px;
+          font-weight: 600;
+          margin-bottom: 14px;
+        }
+
+        .forgot-info-alert {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          background: #ECFDF5;
+          color: #065F46;
+          padding: 10px 14px;
+          border-radius: 6px;
+          font-size: 12.5px;
+          font-weight: 600;
+          margin-bottom: 14px;
+        }
+
+        .forgot-form {
+          display: flex;
+          flex-direction: column;
+          gap: 14px;
+        }
+
+        .otp-input-field {
+          padding-left: 14px !important;
+          letter-spacing: 4px;
+          font-size: 18px !important;
+          font-weight: 800;
+          text-align: center;
+          font-family: monospace !important;
+        }
+
+        .field-hint {
+          font-size: 11px;
+          color: var(--text-muted);
+        }
+
+        .forgot-btn-row {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 10px;
+          margin-top: 6px;
+        }
+
+        .btn-back-step {
+          background: transparent;
+          border: none;
+          color: var(--text-secondary);
+          font-size: 12px;
+          font-weight: 700;
+          cursor: pointer;
+        }
+
+        .forgot-submit-btn {
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          gap: 6px;
+          padding: 10px 18px;
+          font-size: 13px;
+        }
+
+        .forgot-success-box {
+          text-align: center;
+          padding: 14px 0;
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          gap: 10px;
+        }
+
+        .forgot-success-box h4 {
+          margin: 0;
+          font-size: 17px;
+          font-weight: 800;
+          color: #059669;
+        }
+
+        .forgot-success-box p {
+          font-size: 13px;
+          color: var(--text-secondary);
+          margin: 0 0 10px 0;
+        }
+
+        @media (max-width: 960px) {
+          .auth-cards-wrapper {
+            flex-direction: column;
+          }
           .auth-card-split {
             grid-template-columns: 1fr;
           }

@@ -107,7 +107,9 @@ export const api = {
     } catch {}
   },
 
-  // Profile
+  // Profile & Users
+  getUsers: () => request('/users'),
+
   getProfile: (userId) => {
     const query = userId ? `?id=${userId}` : '';
     return request(`/profile${query}`);
@@ -160,11 +162,102 @@ export const api = {
   getHistory: () => request('/history'),
 
   // Reports
+  getReports: () => request('/reports'),
+
   getReport: (analysisId) => {
     if (analysisId) {
       return request(`/reports/${analysisId}`);
     }
     return request('/reports/latest');
+  },
+
+  initDb: () => request('/init-db'),
+
+  // Doctor Application & Verification
+  submitDoctorApplication: (formData) =>
+    request('/doctor-applications', {
+      method: 'POST',
+      body: JSON.stringify(formData),
+    }),
+
+  // Admin Portal
+  adminLogin: async (credentials) => {
+    const res = await request('/admin/login', {
+      method: 'POST',
+      body: JSON.stringify(credentials),
+    });
+    if (res.admin) {
+      api.setAdminUser(res.admin);
+    }
+    return res;
+  },
+
+  getAdminUser: () => {
+    try {
+      const saved = localStorage.getItem('angiolens_admin_user');
+      return saved ? JSON.parse(saved) : null;
+    } catch {
+      return null;
+    }
+  },
+
+  setAdminUser: (admin) => {
+    try {
+      localStorage.setItem('angiolens_admin_user', JSON.stringify(admin));
+    } catch {}
+  },
+
+  adminLogout: () => {
+    try {
+      localStorage.removeItem('angiolens_admin_user');
+    } catch {}
+  },
+
+  getAdminApplications: (status) => {
+    const query = status ? `?status=${status}` : '';
+    return request(`/admin/applications${query}`);
+  },
+
+  approveApplication: (appId) =>
+    request(`/admin/applications/${appId}/approve`, {
+      method: 'POST',
+    }),
+
+  rejectApplication: (appId, reason) =>
+    request(`/admin/applications/${appId}/reject`, {
+      method: 'POST',
+      body: JSON.stringify({ reason }),
+    }),
+
+  // Password Management & OTP
+  changePassword: (data) =>
+    request('/auth/change-password', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
+
+  forgotPassword: (email) =>
+    request('/auth/forgot-password', {
+      method: 'POST',
+      body: JSON.stringify({ email }),
+    }),
+
+  resetPassword: (data) =>
+    request('/auth/reset-password', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
+
+  // Profile Update
+  updateProfile: async (profileData) => {
+    const res = await request('/profile', {
+      method: 'PUT',
+      body: JSON.stringify(profileData),
+    });
+    if (res.user) {
+      api.setCurrentUser(res.user);
+    }
+    return res;
   },
 };
 
