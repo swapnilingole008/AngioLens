@@ -26,9 +26,21 @@ import {
   Download,
   ZoomIn,
   FileCheck2,
-  Maximize2
+  Maximize2,
+  FileX,
+  EyeOff
 } from 'lucide-react';
 import api from '../api';
+
+// Helper to check if a valid file / data-url was uploaded by applicant
+function isRealUploadedFile(src) {
+  if (!src || typeof src !== 'string') return false;
+  const s = src.trim();
+  if (!s || s === 'null' || s === 'undefined' || s === 'None') return false;
+  if (s.startsWith('data:image/') || s.startsWith('data:application/pdf')) return true;
+  if (s.startsWith('http://') || s.startsWith('https://') || s.startsWith('/assets/')) return true;
+  return false;
+}
 
 // Helper to generate an official Medical Certificate / Badge as a high-resolution Canvas Data URL
 function generateCertificateDataUrl(docType, doctor) {
@@ -166,9 +178,20 @@ function handleDownloadCertificate(docType, doctor, fileSrc) {
   if (!doctor) return;
   if (fileSrc && fileSrc.startsWith('data:')) {
     const link = document.createElement('a');
-    const isPdf = fileSrc.includes('pdf');
-    link.download = `${doctor.full_name?.replace(/\s+/g, '_')}_${docType.replace(/\s+/g, '_')}.${isPdf ? 'pdf' : 'png'}`;
+    let ext = 'png';
+    if (fileSrc.startsWith('data:application/pdf')) ext = 'pdf';
+    else if (fileSrc.startsWith('data:image/jpeg') || fileSrc.startsWith('data:image/jpg')) ext = 'jpg';
+    else if (fileSrc.startsWith('data:image/webp')) ext = 'webp';
+    link.download = `${doctor.full_name?.replace(/\s+/g, '_')}_${docType.replace(/\s+/g, '_')}.${ext}`;
     link.href = fileSrc;
+    link.click();
+    return;
+  }
+  if (fileSrc && (fileSrc.startsWith('http://') || fileSrc.startsWith('https://') || fileSrc.startsWith('/assets/'))) {
+    const link = document.createElement('a');
+    link.download = `${doctor.full_name?.replace(/\s+/g, '_')}_${docType.replace(/\s+/g, '_')}.png`;
+    link.href = fileSrc;
+    link.target = '_blank';
     link.click();
     return;
   }
@@ -715,8 +738,8 @@ export default function AdminPage({ onNavigate }) {
                       category: 'Council Registration',
                       sub: `${selectedApp.registration_authority || 'Medical Council'} • ${selectedApp.registration_number}`,
                       fileSrc: selectedApp.registration_certificate,
-                      badge: 'Primary License',
-                      badgeType: 'verified'
+                      defaultFileName: `${selectedApp.full_name?.replace(/\s+/g, '_')}_Registration_Cert`,
+                      isOptional: false,
                     },
                     {
                       id: 'deg_cert',
@@ -724,8 +747,8 @@ export default function AdminPage({ onNavigate }) {
                       category: 'Academic Qualification',
                       sub: `${selectedApp.medical_degree || 'MBBS / MD / DM'}`,
                       fileSrc: selectedApp.degree_certificate,
-                      badge: 'Degree Verified',
-                      badgeType: 'verified'
+                      defaultFileName: `${selectedApp.full_name?.replace(/\s+/g, '_')}_Medical_Degree`,
+                      isOptional: false,
                     },
                     {
                       id: 'spec_cert',
@@ -733,8 +756,8 @@ export default function AdminPage({ onNavigate }) {
                       category: 'Specialty Qualification',
                       sub: `${selectedApp.specialization || 'Cardiology Specialization'}`,
                       fileSrc: selectedApp.specialization_certificate,
-                      badge: 'Specialty Credential',
-                      badgeType: 'verified'
+                      defaultFileName: `${selectedApp.full_name?.replace(/\s+/g, '_')}_Specialization_Cert`,
+                      isOptional: true,
                     },
                     {
                       id: 'hosp_doc',
@@ -742,8 +765,8 @@ export default function AdminPage({ onNavigate }) {
                       category: 'Institutional ID',
                       sub: `${selectedApp.hospital_name || 'Affiliated Hospital'}`,
                       fileSrc: selectedApp.hospital_id_doc,
-                      badge: 'Staff ID',
-                      badgeType: 'neutral'
+                      defaultFileName: `${selectedApp.full_name?.replace(/\s+/g, '_')}_Hospital_ID`,
+                      isOptional: true,
                     },
                     {
                       id: 'govt_doc',
@@ -751,12 +774,59 @@ export default function AdminPage({ onNavigate }) {
                       category: 'Identity Proof',
                       sub: 'Official Photo Identification',
                       fileSrc: selectedApp.govt_id_doc,
-                      badge: 'Identity Proof',
-                      badgeType: 'neutral'
+                      defaultFileName: `${selectedApp.full_name?.replace(/\s+/g, '_')}_Govt_ID`,
+                      isOptional: true,
                     }
                   ].map((cert) => {
-                    const isBase64Img = cert.fileSrc && cert.fileSrc.startsWith('data:image');
-                    const imgSrc = isBase64Img ? cert.fileSrc : generateCertificateDataUrl(cert.title, selectedApp);
+                    const hasRealFile = isRealUploadedFile(cert.fileSrc);
+                    const isUserImg = hasRealFile && (
+                      cert.fileSrc.startsWith('data:image/') || 
+                      cert.fileSrc.startsWith('http://') || 
+                      cert.fileSrc.startsWith('https://') || 
+                      cert.fileSrc.startsWith('/assets/')
+                    );
+                    const isUserPdf = hasRealFile && (
+                      cert.fileSrc.startsWith('data:application/pdf') || 
+                      cert.fileSrc.endsWith('.pdf')
+                    );
+
+                    if (!hasRealFile) {
+                      return (
+                        <div key={cert.id} className="cert-card-item not-avail-card">
+                          <div className="cert-card-header">
+                            <div className="cert-card-header-text">
+                              <span className="cert-category-tag">{cert.category}</span>
+                              <h5 className="cert-card-title">{cert.title}</h5>
+                              <p className="cert-card-sub">{cert.isOptional ? 'Optional - Not Provided' : 'Not attached by applicant'}</p>
+                            </div>
+                            <span className="cert-badge not-avail">
+                              {cert.isOptional ? 'Optional' : 'Not Provided'}
+                            </span>
+                          </div>
+
+                          <div className="cert-thumb-wrap cert-thumb-not-avail" title="Document not uploaded by doctor">
+                            <div className="not-avail-content">
+                              <FileX size={34} className="not-avail-icon" />
+                              <span className="not-avail-title">Not Available</span>
+                              <span className="not-avail-sub">
+                                {cert.isOptional ? 'Optional document omitted by applicant' : 'No document file uploaded'}
+                              </span>
+                            </div>
+                          </div>
+
+                          <div className="cert-card-actions">
+                            <button type="button" className="btn-cert-disabled" disabled>
+                              <EyeOff size={13} />
+                              <span>Not Available</span>
+                            </button>
+                            <button type="button" className="btn-cert-disabled" disabled>
+                              <Download size={13} />
+                              <span>No File</span>
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    }
 
                     return (
                       <div key={cert.id} className="cert-card-item">
@@ -766,34 +836,60 @@ export default function AdminPage({ onNavigate }) {
                             <h5 className="cert-card-title">{cert.title}</h5>
                             <p className="cert-card-sub">{cert.sub}</p>
                           </div>
-                          <span className={`cert-badge ${cert.badgeType}`}>{cert.badge}</span>
+                          <span className="cert-badge uploaded">
+                            Doctor Uploaded ✓
+                          </span>
                         </div>
 
-                        <div 
-                          className="cert-thumb-wrap"
-                          onClick={() => setPreviewCertificate({ title: cert.title, src: imgSrc, doctor: selectedApp, rawSrc: cert.fileSrc })}
-                          title="Click to view full certificate"
-                        >
-                          <img 
-                            src={imgSrc} 
-                            alt={cert.title} 
-                            className="cert-thumb-img" 
-                            loading="lazy"
-                          />
-                          <div className="cert-thumb-overlay">
-                            <Maximize2 size={22} />
-                            <span>Click to Inspect Fullscreen</span>
+                        {isUserPdf ? (
+                          <div 
+                            className="cert-thumb-wrap cert-pdf-thumb-wrap"
+                            onClick={() => setPreviewCertificate({ title: cert.title, src: cert.fileSrc, doctor: selectedApp, isPdf: true, isUserUpload: true })}
+                            title="Click to view uploaded PDF document"
+                          >
+                            <div className="pdf-thumb-content">
+                              <FileText size={38} className="pdf-thumb-icon" />
+                              <span className="pdf-thumb-badge">PDF DOCUMENT</span>
+                              <span className="pdf-thumb-name">{cert.defaultFileName}.pdf</span>
+                            </div>
+                            <div className="cert-thumb-overlay">
+                              <Maximize2 size={22} />
+                              <span>Open PDF Viewer</span>
+                            </div>
                           </div>
-                        </div>
+                        ) : (
+                          <div 
+                            className="cert-thumb-wrap"
+                            onClick={() => setPreviewCertificate({ title: cert.title, src: cert.fileSrc, doctor: selectedApp, isPdf: false, isUserUpload: true })}
+                            title="Click to view full image"
+                          >
+                            <img 
+                              src={cert.fileSrc} 
+                              alt={cert.title} 
+                              className="cert-thumb-img user-uploaded-img" 
+                              loading="lazy"
+                            />
+                            <div className="cert-thumb-overlay">
+                              <Maximize2 size={22} />
+                              <span>View Uploaded Image</span>
+                            </div>
+                          </div>
+                        )}
 
                         <div className="cert-card-actions">
                           <button 
                             type="button"
                             className="btn-cert-view"
-                            onClick={() => setPreviewCertificate({ title: cert.title, src: imgSrc, doctor: selectedApp, rawSrc: cert.fileSrc })}
+                            onClick={() => setPreviewCertificate({ 
+                              title: cert.title, 
+                              src: cert.fileSrc, 
+                              doctor: selectedApp, 
+                              isPdf: isUserPdf,
+                              isUserUpload: true 
+                            })}
                           >
                             <Eye size={13} />
-                            <span>View Fullscreen</span>
+                            <span>{isUserPdf ? 'Open PDF' : 'View Fullscreen'}</span>
                           </button>
                           <button 
                             type="button"
@@ -861,6 +957,7 @@ export default function AdminPage({ onNavigate }) {
                   <h3>{previewCertificate.title}</h3>
                   <span className="cert-lightbox-sub">
                     {previewCertificate.doctor.full_name} • Reg No: {previewCertificate.doctor.registration_number || 'N/A'} • {previewCertificate.doctor.registration_authority || 'Medical Council'}
+                    {previewCertificate.isUserUpload && ' • (Doctor Uploaded Document)'}
                   </span>
                 </div>
               </div>
@@ -868,10 +965,10 @@ export default function AdminPage({ onNavigate }) {
                 <button 
                   type="button"
                   className="btn-lightbox-download"
-                  onClick={() => handleDownloadCertificate(previewCertificate.title, previewCertificate.doctor, previewCertificate.rawSrc || previewCertificate.src)}
+                  onClick={() => handleDownloadCertificate(previewCertificate.title, previewCertificate.doctor, previewCertificate.src)}
                 >
                   <Download size={15} />
-                  <span>Download Certificate</span>
+                  <span>Download {previewCertificate.isPdf ? 'PDF' : 'Certificate'}</span>
                 </button>
                 <button 
                   type="button"
@@ -884,15 +981,24 @@ export default function AdminPage({ onNavigate }) {
               </div>
             </div>
             <div className="cert-lightbox-body">
-              <img 
-                src={previewCertificate.src} 
-                alt={previewCertificate.title} 
-                className="cert-lightbox-img" 
-              />
+              {previewCertificate.isPdf || (previewCertificate.src && previewCertificate.src.startsWith('data:application/pdf')) ? (
+                <iframe 
+                  src={previewCertificate.src} 
+                  title={previewCertificate.title} 
+                  className="cert-lightbox-pdf-frame" 
+                  style={{ width: '100%', height: '70vh', border: 'none', background: '#FFFFFF', borderRadius: '6px' }}
+                />
+              ) : (
+                <img 
+                  src={previewCertificate.src} 
+                  alt={previewCertificate.title} 
+                  className="cert-lightbox-img" 
+                />
+              )}
             </div>
             <div className="cert-lightbox-footer">
               <span className="cert-lightbox-meta">
-                Official Medical Verification System • Digitally Signed & Sealed • Encrypted Security
+                Official Medical Verification System • {previewCertificate.isUserUpload ? 'Applicant Uploaded Document' : 'Digitally Signed & Sealed'}
               </span>
               <button 
                 type="button"
@@ -1777,21 +1883,133 @@ export default function AdminPage({ onNavigate }) {
           border: 1px solid #A7F3D0;
         }
 
+        .cert-badge.uploaded {
+          background: #ECFDF5;
+          color: #047857;
+          border: 1px solid #6EE7B7;
+          font-weight: 800;
+        }
+
+        .cert-badge.not-avail {
+          background: #F3F4F6;
+          color: #6B7280;
+          border: 1px solid #D1D5DB;
+        }
+
         .cert-badge.neutral {
           background: #F3F4F6;
           color: #4B5563;
           border: 1px solid #E5E7EB;
         }
 
+        .cert-card-item.not-avail-card {
+          opacity: 0.85;
+          background: #FAFAFA;
+        }
+
         .cert-thumb-wrap {
           position: relative;
           width: 100%;
-          height: 135px;
+          height: 140px;
           border-radius: 6px;
           overflow: hidden;
           background: #F9FAFB;
           border: 1px solid #E5E7EB;
           cursor: pointer;
+        }
+
+        .cert-thumb-not-avail {
+          background: #F9FAFB !important;
+          border: 1.5px dashed #D1D5DB !important;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          cursor: default !important;
+        }
+
+        .not-avail-content {
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          justify-content: center;
+          gap: 6px;
+          padding: 12px;
+          text-align: center;
+        }
+
+        .not-avail-icon {
+          color: #9CA3AF;
+        }
+
+        .not-avail-title {
+          font-size: 12px;
+          font-weight: 700;
+          color: #4B5563;
+        }
+
+        .not-avail-sub {
+          font-size: 10.5px;
+          color: #9CA3AF;
+          line-height: 1.3;
+        }
+
+        .btn-cert-disabled {
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          gap: 5px;
+          padding: 6px 8px;
+          border-radius: 5px;
+          font-size: 11.5px;
+          font-weight: 600;
+          background: #F3F4F6;
+          color: #9CA3AF;
+          border: 1px solid #E5E7EB;
+          cursor: not-allowed;
+        }
+
+        .cert-pdf-thumb-wrap {
+          background: #FAF5F6;
+          border: 1.5px dashed var(--burgundy-border);
+          display: flex;
+          align-items: center;
+          justify-content: center;
+        }
+
+        .pdf-thumb-content {
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          justify-content: center;
+          gap: 6px;
+          padding: 12px;
+          text-align: center;
+          width: 100%;
+        }
+
+        .pdf-thumb-icon {
+          color: var(--burgundy-primary);
+        }
+
+        .pdf-thumb-badge {
+          font-size: 10px;
+          font-weight: 800;
+          color: var(--burgundy-primary);
+          background: #FAF1F3;
+          border: 1px solid var(--burgundy-border);
+          padding: 2px 8px;
+          border-radius: 10px;
+          letter-spacing: 0.5px;
+        }
+
+        .pdf-thumb-name {
+          font-size: 11px;
+          font-weight: 600;
+          color: var(--text-secondary);
+          max-width: 90%;
+          white-space: nowrap;
+          overflow: hidden;
+          text-overflow: ellipsis;
         }
 
         .cert-thumb-img {

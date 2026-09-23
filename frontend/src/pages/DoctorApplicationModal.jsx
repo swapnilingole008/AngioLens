@@ -57,10 +57,14 @@ export default function DoctorApplicationModal({ isOpen, onClose }) {
     if (file) {
       const reader = new FileReader();
       reader.onload = (uploadEvent) => {
+        const result = uploadEvent.target.result;
         setFormData(prev => ({
           ...prev,
-          [fieldKey]: uploadEvent.target.result,
-          [nameKey]: file.name
+          [fieldKey]: result,
+          [nameKey]: file.name,
+          [`${fieldKey}_is_img`]: file.type.startsWith('image/'),
+          [`${fieldKey}_is_pdf`]: file.type.includes('pdf') || file.name.endsWith('.pdf'),
+          [`${fieldKey}_size`]: (file.size / (1024 * 1024)).toFixed(2) + ' MB'
         }));
       };
       reader.readAsDataURL(file);
@@ -113,11 +117,11 @@ export default function DoctorApplicationModal({ isOpen, onClose }) {
     try {
       const payload = {
         ...formData,
-        registration_certificate: formData.registration_certificate || formData.registration_certificate_name || 'Medical_Registration_Certificate.pdf',
-        degree_certificate: formData.degree_certificate || formData.degree_certificate_name || 'MBBS_Degree_Certificate.pdf',
-        specialization_certificate: formData.specialization_certificate || formData.specialization_certificate_name || 'Cardiology_Specialization.pdf',
-        hospital_id_doc: formData.hospital_id_doc || formData.hospital_id_doc_name || 'Hospital_Employee_ID.pdf',
-        govt_id_doc: formData.govt_id_doc || formData.govt_id_doc_name || 'Government_Identity_Proof.pdf',
+        registration_certificate: formData.registration_certificate || formData.registration_certificate_name || null,
+        degree_certificate: formData.degree_certificate || formData.degree_certificate_name || null,
+        specialization_certificate: formData.specialization_certificate || formData.specialization_certificate_name || null,
+        hospital_id_doc: formData.hospital_id_doc || formData.hospital_id_doc_name || null,
+        govt_id_doc: formData.govt_id_doc || formData.govt_id_doc_name || null,
       };
 
       const res = await api.submitDoctorApplication(payload);
@@ -403,14 +407,34 @@ export default function DoctorApplicationModal({ isOpen, onClose }) {
                   <span className="doc-label">Medical Registration Certificate <span className="req">*</span></span>
                   <span className="doc-badge req-badge">Most Important</span>
                 </div>
-                <label className="file-drop-zone">
+                <label className={`file-drop-zone ${formData.registration_certificate ? 'has-file' : ''}`}>
                   <input 
                     type="file" 
-                    accept=".pdf,.jpg,.jpeg,.png" 
+                    accept=".pdf,.jpg,.jpeg,.png,.webp" 
                     onChange={(e) => handleFileUpload('registration_certificate', 'registration_certificate_name', e)}
                   />
-                  <Upload size={16} />
-                  <span>{formData.registration_certificate_name || 'Upload Registration Certificate (PDF/JPG)'}</span>
+                  {formData.registration_certificate_is_img ? (
+                    <div className="upload-preview-active">
+                      <img src={formData.registration_certificate} alt="Registration Cert" className="upload-mini-thumb" />
+                      <div className="upload-file-meta">
+                        <span className="file-loaded-name">{formData.registration_certificate_name}</span>
+                        <span className="file-loaded-badge">Image Attached ✓ ({formData.registration_certificate_size})</span>
+                      </div>
+                    </div>
+                  ) : formData.registration_certificate_name ? (
+                    <div className="upload-preview-active">
+                      <FileCheck2 size={18} className="text-burgundy" />
+                      <div className="upload-file-meta">
+                        <span className="file-loaded-name">{formData.registration_certificate_name}</span>
+                        <span className="file-loaded-badge">PDF Document Attached ✓</span>
+                      </div>
+                    </div>
+                  ) : (
+                    <>
+                      <Upload size={16} />
+                      <span>Upload Registration Certificate (PDF/JPG)</span>
+                    </>
+                  )}
                 </label>
               </div>
 
@@ -420,14 +444,34 @@ export default function DoctorApplicationModal({ isOpen, onClose }) {
                   <span className="doc-label">Medical Degree Certificate (MBBS/MD)</span>
                   <span className="doc-badge">Required</span>
                 </div>
-                <label className="file-drop-zone">
+                <label className={`file-drop-zone ${formData.degree_certificate ? 'has-file' : ''}`}>
                   <input 
                     type="file" 
-                    accept=".pdf,.jpg,.jpeg,.png" 
+                    accept=".pdf,.jpg,.jpeg,.png,.webp" 
                     onChange={(e) => handleFileUpload('degree_certificate', 'degree_certificate_name', e)}
                   />
-                  <Upload size={16} />
-                  <span>{formData.degree_certificate_name || 'Upload Degree Certificate (PDF/JPG)'}</span>
+                  {formData.degree_certificate_is_img ? (
+                    <div className="upload-preview-active">
+                      <img src={formData.degree_certificate} alt="Degree Cert" className="upload-mini-thumb" />
+                      <div className="upload-file-meta">
+                        <span className="file-loaded-name">{formData.degree_certificate_name}</span>
+                        <span className="file-loaded-badge">Image Attached ✓ ({formData.degree_certificate_size})</span>
+                      </div>
+                    </div>
+                  ) : formData.degree_certificate_name ? (
+                    <div className="upload-preview-active">
+                      <FileCheck2 size={18} className="text-burgundy" />
+                      <div className="upload-file-meta">
+                        <span className="file-loaded-name">{formData.degree_certificate_name}</span>
+                        <span className="file-loaded-badge">PDF Document Attached ✓</span>
+                      </div>
+                    </div>
+                  ) : (
+                    <>
+                      <Upload size={16} />
+                      <span>Upload Degree Certificate (PDF/JPG)</span>
+                    </>
+                  )}
                 </label>
               </div>
 
@@ -437,31 +481,71 @@ export default function DoctorApplicationModal({ isOpen, onClose }) {
                   <span className="doc-label">Specialization Certificate (DM/DNB)</span>
                   <span className="doc-badge opt-badge">If Applicable</span>
                 </div>
-                <label className="file-drop-zone">
+                <label className={`file-drop-zone ${formData.specialization_certificate ? 'has-file' : ''}`}>
                   <input 
                     type="file" 
-                    accept=".pdf,.jpg,.jpeg,.png" 
+                    accept=".pdf,.jpg,.jpeg,.png,.webp" 
                     onChange={(e) => handleFileUpload('specialization_certificate', 'specialization_certificate_name', e)}
                   />
-                  <Upload size={16} />
-                  <span>{formData.specialization_certificate_name || 'Upload Specialization Certificate'}</span>
+                  {formData.specialization_certificate_is_img ? (
+                    <div className="upload-preview-active">
+                      <img src={formData.specialization_certificate} alt="Specialization Cert" className="upload-mini-thumb" />
+                      <div className="upload-file-meta">
+                        <span className="file-loaded-name">{formData.specialization_certificate_name}</span>
+                        <span className="file-loaded-badge">Image Attached ✓</span>
+                      </div>
+                    </div>
+                  ) : formData.specialization_certificate_name ? (
+                    <div className="upload-preview-active">
+                      <FileCheck2 size={18} className="text-burgundy" />
+                      <div className="upload-file-meta">
+                        <span className="file-loaded-name">{formData.specialization_certificate_name}</span>
+                        <span className="file-loaded-badge">PDF Document Attached ✓</span>
+                      </div>
+                    </div>
+                  ) : (
+                    <>
+                      <Upload size={16} />
+                      <span>Upload Specialization Certificate</span>
+                    </>
+                  )}
                 </label>
               </div>
 
               {/* Doc 4 */}
               <div className="doc-upload-item">
                 <div className="doc-item-header">
-                  <span className="doc-label">Hospital / Institution ID Card</span>
+                  <span className="doc-label">Hospital Staff ID Card</span>
                   <span className="doc-badge opt-badge">Recommended</span>
                 </div>
-                <label className="file-drop-zone">
+                <label className={`file-drop-zone ${formData.hospital_id_doc ? 'has-file' : ''}`}>
                   <input 
                     type="file" 
-                    accept=".pdf,.jpg,.jpeg,.png" 
+                    accept=".pdf,.jpg,.jpeg,.png,.webp" 
                     onChange={(e) => handleFileUpload('hospital_id_doc', 'hospital_id_doc_name', e)}
                   />
-                  <Upload size={16} />
-                  <span>{formData.hospital_id_doc_name || 'Upload Hospital Staff ID Card'}</span>
+                  {formData.hospital_id_doc_is_img ? (
+                    <div className="upload-preview-active">
+                      <img src={formData.hospital_id_doc} alt="Hospital ID" className="upload-mini-thumb" />
+                      <div className="upload-file-meta">
+                        <span className="file-loaded-name">{formData.hospital_id_doc_name}</span>
+                        <span className="file-loaded-badge">Image Attached ✓</span>
+                      </div>
+                    </div>
+                  ) : formData.hospital_id_doc_name ? (
+                    <div className="upload-preview-active">
+                      <FileCheck2 size={18} className="text-burgundy" />
+                      <div className="upload-file-meta">
+                        <span className="file-loaded-name">{formData.hospital_id_doc_name}</span>
+                        <span className="file-loaded-badge">Document Attached ✓</span>
+                      </div>
+                    </div>
+                  ) : (
+                    <>
+                      <Upload size={16} />
+                      <span>Upload Hospital Staff ID Card</span>
+                    </>
+                  )}
                 </label>
               </div>
 
@@ -471,14 +555,34 @@ export default function DoctorApplicationModal({ isOpen, onClose }) {
                   <span className="doc-label">Government ID (Aadhaar/Passport)</span>
                   <span className="doc-badge opt-badge">Optional</span>
                 </div>
-                <label className="file-drop-zone">
+                <label className={`file-drop-zone ${formData.govt_id_doc ? 'has-file' : ''}`}>
                   <input 
                     type="file" 
-                    accept=".pdf,.jpg,.jpeg,.png" 
+                    accept=".pdf,.jpg,.jpeg,.png,.webp" 
                     onChange={(e) => handleFileUpload('govt_id_doc', 'govt_id_doc_name', e)}
                   />
-                  <Upload size={16} />
-                  <span>{formData.govt_id_doc_name || 'Upload Government Photo ID'}</span>
+                  {formData.govt_id_doc_is_img ? (
+                    <div className="upload-preview-active">
+                      <img src={formData.govt_id_doc} alt="Govt ID" className="upload-mini-thumb" />
+                      <div className="upload-file-meta">
+                        <span className="file-loaded-name">{formData.govt_id_doc_name}</span>
+                        <span className="file-loaded-badge">Image Attached ✓</span>
+                      </div>
+                    </div>
+                  ) : formData.govt_id_doc_name ? (
+                    <div className="upload-preview-active">
+                      <FileCheck2 size={18} className="text-burgundy" />
+                      <div className="upload-file-meta">
+                        <span className="file-loaded-name">{formData.govt_id_doc_name}</span>
+                        <span className="file-loaded-badge">Document Attached ✓</span>
+                      </div>
+                    </div>
+                  ) : (
+                    <>
+                      <Upload size={16} />
+                      <span>Upload Government Photo ID</span>
+                    </>
+                  )}
                 </label>
               </div>
             </div>
@@ -752,18 +856,62 @@ export default function DoctorApplicationModal({ isOpen, onClose }) {
           align-items: center;
           gap: 8px;
           padding: 8px 12px;
-          border: 1px dashed var(--burgundy-primary);
+          border: 1.5px dashed var(--burgundy-primary);
           border-radius: 6px;
           background: #FFFFFF;
           cursor: pointer;
           font-size: 12px;
           color: var(--burgundy-primary);
           font-weight: 600;
-          transition: background 0.15s ease;
+          transition: all 0.15s ease;
         }
 
         .file-drop-zone:hover {
           background: #FAF1F3;
+        }
+
+        .file-drop-zone.has-file {
+          border-style: solid;
+          border-color: #059669;
+          background: #F0FDF4;
+        }
+
+        .upload-preview-active {
+          display: flex;
+          align-items: center;
+          gap: 10px;
+          width: 100%;
+        }
+
+        .upload-mini-thumb {
+          width: 42px;
+          height: 32px;
+          object-fit: cover;
+          border-radius: 4px;
+          border: 1px solid #A7F3D0;
+          box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+        }
+
+        .upload-file-meta {
+          display: flex;
+          flex-direction: column;
+          gap: 2px;
+          overflow: hidden;
+        }
+
+        .file-loaded-name {
+          font-size: 12px;
+          font-weight: 700;
+          color: #065F46;
+          white-space: nowrap;
+          overflow: hidden;
+          text-overflow: ellipsis;
+        }
+
+        .file-loaded-badge {
+          font-size: 10.5px;
+          color: #059669;
+          font-weight: 600;
         }
 
         .file-drop-zone input {
