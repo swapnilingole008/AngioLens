@@ -287,6 +287,7 @@ class DoctorReview(Base):
 # 4. Initialize Flask Application
 app = Flask(__name__)
 app.config['SECRET_KEY'] = SECRET_KEY
+app.config['MAX_CONTENT_LENGTH'] = 64 * 1024 * 1024  # 64MB upload support for high-res documents
 
 @app.teardown_appcontext
 def shutdown_session(exception=None):
