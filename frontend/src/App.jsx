@@ -10,6 +10,7 @@ import ProfilePage from './pages/ProfilePage';
 import LoginPage from './pages/LoginPage';
 import SignupPage from './pages/SignupPage';
 import AdminPage from './pages/AdminPage';
+import api from './api';
 
 export default function App() {
   // Simple client-side routing state matching browser history or URL hash
@@ -22,6 +23,9 @@ export default function App() {
   };
 
   useEffect(() => {
+    // Prefetch database reports & history in the background for instant tab switches
+    api.prefetch(['reports', 'history']).catch(() => {});
+
     const handlePopState = () => {
       setCurrentPath(window.location.pathname || '/');
     };

@@ -1,39 +1,43 @@
 import React, { useState, useEffect } from 'react';
-import { Search, Filter, Eye, FileText, ChevronRight, Loader2 } from 'lucide-react';
+import { Search, Filter, Eye, FileText, ChevronRight, Loader2, RefreshCw } from 'lucide-react';
 import api from '../api';
 
 export default function HistoryPage({ onNavigate }) {
   const [searchTerm, setSearchTerm] = useState('');
   const [filter, setFilter] = useState('all');
-  const [records, setRecords] = useState([]);
-  const [isLoading, setIsLoading] = useState(true);
+  const cachedHistory = api.getCachedData('history');
+  const [records, setRecords] = useState(cachedHistory?.records || []);
+  const [isLoading, setIsLoading] = useState(!cachedHistory);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+
+  const fetchHistory = async (force = false) => {
+    if (force) {
+      setIsRefreshing(true);
+    } else if (!api.getCachedData('history')) {
+      setIsLoading(true);
+    }
+    try {
+      const res = await api.getHistory(force);
+      if (res?.records && Array.isArray(res.records)) {
+        setRecords(res.records);
+      } else {
+        setRecords([]);
+      }
+    } catch (err) {
+      console.error('Failed to fetch history from database:', err);
+      if (!api.getCachedData('history')) {
+        setRecords([]);
+      }
+    } finally {
+      setIsLoading(false);
+      setIsRefreshing(false);
+    }
+  };
 
   useEffect(() => {
-    let isMounted = true;
-    const fetchHistory = async () => {
-      setIsLoading(true);
-      try {
-        const res = await api.getHistory();
-        if (isMounted) {
-          if (res?.records && Array.isArray(res.records)) {
-            setRecords(res.records);
-          } else {
-            setRecords([]);
-          }
-        }
-      } catch (err) {
-        console.error('Failed to fetch history from database:', err);
-        if (isMounted) {
-          setRecords([]);
-        }
-      } finally {
-        if (isMounted) {
-          setIsLoading(false);
-        }
-      }
-    };
-    fetchHistory();
-    return () => { isMounted = false; };
+    if (!api.getCachedData('history')) {
+      fetchHistory(false);
+    }
   }, []);
 
   const filtered = records.filter((r) => {
@@ -54,7 +58,7 @@ export default function HistoryPage({ onNavigate }) {
           <p className="history-sub">Review and audit previous angiogram evaluations and clinical verifications</p>
         </div>
 
-        {/* Search & Filter Bar */}
+        {/* Search & Filter & Refresh Bar */}
         <div className="history-controls">
           <div className="search-box">
             <Search size={16} className="search-icon" />
@@ -65,6 +69,16 @@ export default function HistoryPage({ onNavigate }) {
               onChange={(e) => setSearchTerm(e.target.value)}
             />
           </div>
+
+          <button
+            className={`btn-refresh ${isRefreshing ? 'refreshing' : ''}`}
+            onClick={() => fetchHistory(true)}
+            title="Refresh history directly from database"
+            disabled={isRefreshing}
+          >
+            <RefreshCw size={14} className={isRefreshing ? 'spin-icon' : ''} />
+            <span>{isRefreshing ? 'Refreshing...' : 'Refresh'}</span>
+          </button>
 
           <div className="filter-pill-group">
             {['all', 'severe', 'moderate', 'verified'].map((f) => (
@@ -189,7 +203,7 @@ export default function HistoryPage({ onNavigate }) {
         .history-page-container {
           display: flex;
           flex-direction: column;
-          gap: 20px;
+          gap: 28px;
           animation: fadeIn 0.3s ease-out;
         }
 
@@ -198,7 +212,9 @@ export default function HistoryPage({ onNavigate }) {
           justify-content: space-between;
           align-items: flex-end;
           flex-wrap: wrap;
-          gap: 16px;
+          gap: 20px;
+          padding-bottom: 6px;
+          margin-bottom: 6px;
         }
 
         .history-title {
@@ -206,18 +222,20 @@ export default function HistoryPage({ onNavigate }) {
           font-weight: 800;
           color: var(--text-main);
           letter-spacing: -0.5px;
+          line-height: 1.2;
         }
 
         .history-sub {
           font-size: 13px;
           color: var(--text-secondary);
-          margin-top: 4px;
+          margin-top: 6px;
+          line-height: 1.4;
         }
 
         .history-controls {
           display: flex;
           align-items: center;
-          gap: 14px;
+          gap: 12px;
           flex-wrap: wrap;
         }
 
@@ -229,6 +247,13 @@ export default function HistoryPage({ onNavigate }) {
           border-radius: var(--radius-pill);
           padding: 6px 14px;
           width: 260px;
+          box-shadow: 0 1px 3px rgba(0, 0, 0, 0.03);
+          transition: border-color 0.2s ease, box-shadow 0.2s ease;
+        }
+
+        .search-box:focus-within {
+          border-color: var(--burgundy-primary);
+          box-shadow: 0 0 0 3px var(--pink-surface);
         }
 
         .search-box input {
@@ -242,6 +267,43 @@ export default function HistoryPage({ onNavigate }) {
 
         .search-icon {
           color: var(--text-muted);
+        }
+
+        .btn-refresh {
+          display: inline-flex;
+          align-items: center;
+          gap: 6px;
+          background: #FFFFFF;
+          border: 1px solid var(--burgundy-border);
+          color: var(--burgundy-primary);
+          padding: 6px 14px;
+          border-radius: var(--radius-pill);
+          font-size: 12.5px;
+          font-weight: 700;
+          cursor: pointer;
+          transition: all 0.2s ease;
+          font-family: inherit;
+          box-shadow: 0 1px 3px rgba(133, 16, 54, 0.05);
+        }
+
+        .btn-refresh:hover:not(:disabled) {
+          background: var(--pink-surface);
+          border-color: var(--burgundy-primary);
+          transform: translateY(-1px);
+        }
+
+        .btn-refresh:disabled {
+          opacity: 0.65;
+          cursor: not-allowed;
+        }
+
+        .spin-icon {
+          animation: spinCw 0.85s linear infinite;
+        }
+
+        @keyframes spinCw {
+          from { transform: rotate(0deg); }
+          to { transform: rotate(360deg); }
         }
 
         .filter-pill-group {
@@ -261,6 +323,7 @@ export default function HistoryPage({ onNavigate }) {
           font-weight: 600;
           color: var(--text-secondary);
           cursor: pointer;
+          transition: all 0.15s ease;
         }
 
         .filter-pill.active {
@@ -271,6 +334,10 @@ export default function HistoryPage({ onNavigate }) {
         .history-table-card {
           padding: 0;
           overflow: hidden;
+          margin-top: 6px;
+          box-shadow: var(--card-shadow);
+          border: 1px solid var(--burgundy-border);
+          border-radius: var(--radius-lg);
         }
 
         .history-table {

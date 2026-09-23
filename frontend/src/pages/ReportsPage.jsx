@@ -13,7 +13,8 @@ import {
   Sparkles,
   ChevronRight,
   Filter,
-  Loader2
+  Loader2,
+  RefreshCw
 } from 'lucide-react';
 import angiogramSample from '../assets/images/angiogram-sample.jpg';
 import api from '../api';
@@ -21,8 +22,10 @@ import api from '../api';
 export default function ReportsPage({ onNavigate }) {
   const [viewMode, setViewMode] = useState('list'); // 'list' | 'detail'
   const [selectedReport, setSelectedReport] = useState(null);
-  const [reportsList, setReportsList] = useState([]);
-  const [isLoading, setIsLoading] = useState(true);
+  const cachedReports = api.getCachedData('reports');
+  const [reportsList, setReportsList] = useState(cachedReports?.reports || []);
+  const [isLoading, setIsLoading] = useState(!cachedReports);
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [filter, setFilter] = useState('all');
 
@@ -125,30 +128,39 @@ export default function ReportsPage({ onNavigate }) {
     }
   ];
 
+  const fetchReports = async (force = false) => {
+    if (force) {
+      setIsRefreshing(true);
+    } else if (!api.getCachedData('reports')) {
+      setIsLoading(true);
+    }
+    let list = [];
+    try {
+      const res = await api.getReports(force);
+      if (res?.reports && Array.isArray(res.reports)) {
+        list = res.reports;
+        setReportsList(list);
+      } else {
+        setReportsList([]);
+      }
+    } catch (err) {
+      console.error('Failed to load reports from database:', err);
+      if (!api.getCachedData('reports')) {
+        setReportsList([]);
+      }
+    } finally {
+      setIsLoading(false);
+      setIsRefreshing(false);
+    }
+    return list;
+  };
+
   useEffect(() => {
     let isMounted = true;
-    const fetchReports = async () => {
-      setIsLoading(true);
-      let list = [];
-      try {
-        const res = await api.getReports();
-        if (isMounted) {
-          if (res?.reports && Array.isArray(res.reports) && res.reports.length > 0) {
-            list = res.reports;
-            setReportsList(list);
-          } else {
-            setReportsList([]);
-          }
-        }
-      } catch (err) {
-        console.error('Failed to load reports from database:', err);
-        if (isMounted) {
-          setReportsList([]);
-        }
-      } finally {
-        if (isMounted) {
-          setIsLoading(false);
-        }
+    const init = async () => {
+      let list = reportsList;
+      if (!api.getCachedData('reports')) {
+        list = await fetchReports(false);
       }
 
       // Check if user came from ResultsPage to view this specific patient's report
@@ -160,7 +172,8 @@ export default function ReportsPage({ onNavigate }) {
           localStorage.removeItem('angiolens_open_report_detail');
         } catch {}
 
-        const matched = list.find(r => String(r.analysis_id) === String(currentAnalysisId));
+        const currentReportsList = (list && list.length > 0) ? list : (api.getCachedData('reports')?.reports || []);
+        const matched = currentReportsList.find(r => String(r.analysis_id) === String(currentAnalysisId));
         if (matched) {
           setSelectedReport(matched);
           setViewMode('detail');
@@ -175,7 +188,7 @@ export default function ReportsPage({ onNavigate }) {
         }
       }
     };
-    fetchReports();
+    init();
     return () => { isMounted = false; };
   }, []);
 
@@ -229,7 +242,7 @@ export default function ReportsPage({ onNavigate }) {
               </p>
             </div>
 
-            {/* Search & Filter */}
+            {/* Search & Filter & Refresh */}
             <div className="catalog-controls">
               <div className="search-box">
                 <Search size={16} className="search-icon" />
@@ -240,6 +253,16 @@ export default function ReportsPage({ onNavigate }) {
                   onChange={(e) => setSearchTerm(e.target.value)}
                 />
               </div>
+
+              <button
+                className={`btn-refresh ${isRefreshing ? 'refreshing' : ''}`}
+                onClick={() => fetchReports(true)}
+                title="Refresh reports directly from database"
+                disabled={isRefreshing}
+              >
+                <RefreshCw size={14} className={isRefreshing ? 'spin-icon' : ''} />
+                <span>{isRefreshing ? 'Refreshing...' : 'Refresh'}</span>
+              </button>
 
               <div className="filter-pill-group">
                 {['all', 'verified', 'severe', 'moderate'].map((f) => (
@@ -520,17 +543,25 @@ export default function ReportsPage({ onNavigate }) {
         .reports-page-container {
           display: flex;
           flex-direction: column;
-          gap: 22px;
+          gap: 28px;
           animation: fadeIn 0.3s ease-out;
         }
 
         /* Catalog View Styles */
+        .reports-catalog-view {
+          display: flex;
+          flex-direction: column;
+          gap: 24px;
+        }
+
         .catalog-header {
           display: flex;
           justify-content: space-between;
           align-items: flex-end;
           flex-wrap: wrap;
-          gap: 16px;
+          gap: 20px;
+          padding-bottom: 6px;
+          margin-bottom: 6px;
         }
 
         .catalog-title {
@@ -538,12 +569,14 @@ export default function ReportsPage({ onNavigate }) {
           font-weight: 800;
           color: var(--text-main);
           letter-spacing: -0.5px;
+          line-height: 1.2;
         }
 
         .catalog-sub {
           font-size: 13.5px;
           color: var(--text-secondary);
-          margin-top: 4px;
+          margin-top: 6px;
+          line-height: 1.4;
         }
 
         .catalog-controls {
@@ -561,6 +594,13 @@ export default function ReportsPage({ onNavigate }) {
           border-radius: var(--radius-pill);
           padding: 6px 14px;
           width: 300px;
+          box-shadow: 0 1px 3px rgba(0, 0, 0, 0.03);
+          transition: border-color 0.2s ease, box-shadow 0.2s ease;
+        }
+
+        .search-box:focus-within {
+          border-color: var(--burgundy-primary);
+          box-shadow: 0 0 0 3px var(--pink-surface);
         }
 
         .search-box input {
@@ -574,6 +614,43 @@ export default function ReportsPage({ onNavigate }) {
 
         .search-icon {
           color: var(--text-muted);
+        }
+
+        .btn-refresh {
+          display: inline-flex;
+          align-items: center;
+          gap: 6px;
+          background: #FFFFFF;
+          border: 1px solid var(--burgundy-border);
+          color: var(--burgundy-primary);
+          padding: 6px 14px;
+          border-radius: var(--radius-pill);
+          font-size: 12.5px;
+          font-weight: 700;
+          cursor: pointer;
+          transition: all 0.2s ease;
+          font-family: inherit;
+          box-shadow: 0 1px 3px rgba(133, 16, 54, 0.05);
+        }
+
+        .btn-refresh:hover:not(:disabled) {
+          background: var(--pink-surface);
+          border-color: var(--burgundy-primary);
+          transform: translateY(-1px);
+        }
+
+        .btn-refresh:disabled {
+          opacity: 0.65;
+          cursor: not-allowed;
+        }
+
+        .spin-icon {
+          animation: spinCw 0.85s linear infinite;
+        }
+
+        @keyframes spinCw {
+          from { transform: rotate(0deg); }
+          to { transform: rotate(360deg); }
         }
 
         .filter-pill-group {
@@ -593,6 +670,7 @@ export default function ReportsPage({ onNavigate }) {
           font-weight: 600;
           color: var(--text-secondary);
           cursor: pointer;
+          transition: all 0.15s ease;
         }
 
         .filter-pill.active {
@@ -600,10 +678,14 @@ export default function ReportsPage({ onNavigate }) {
           color: #FFFFFF;
         }
 
-        /* Reports Table */
+        /* Reports Table Card */
         .reports-table-card {
           padding: 0;
           overflow: hidden;
+          margin-top: 6px;
+          box-shadow: var(--card-shadow);
+          border: 1px solid var(--burgundy-border);
+          border-radius: var(--radius-lg);
         }
 
         .reports-table {
