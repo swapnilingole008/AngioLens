@@ -4,6 +4,7 @@ import smtplib
 import ssl
 import random
 import string
+import threading
 from datetime import datetime, timedelta
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
@@ -69,12 +70,14 @@ else:
     ssl_query = "?sslmode=require" if DB_SSLMODE == "require" else ""
     DATABASE_URL = f"postgresql+psycopg2://{DB_USER}:{encoded_password}@{DB_HOST}:{DB_PORT}/{DB_NAME}{ssl_query}"
 
-# Create SQLAlchemy engine and scoped session
+# Create SQLAlchemy engine and scoped session with high-throughput pooling
 engine = create_engine(
     DATABASE_URL,
     pool_pre_ping=True,
-    pool_size=10,
-    max_overflow=20,
+    pool_size=20,
+    max_overflow=30,
+    pool_recycle=300,
+    pool_timeout=10,
 )
 SessionFactory = sessionmaker(bind=engine, autocommit=False, autoflush=False)
 db_session = scoped_session(SessionFactory)
@@ -355,6 +358,17 @@ def send_email(to_email, subject, html_content, text_content=None):
         print(f"[SMTP WARNING] Failed to deliver email to {to_email}: {e}")
         return False, str(e)
 
+def send_email_async(to_email, subject, html_content, text_content=None):
+    """
+    Asynchronously dispatches emails in a background daemon thread so that HTTP API responses return immediately (<20ms).
+    """
+    t = threading.Thread(
+        target=send_email,
+        args=(to_email, subject, html_content, text_content),
+        daemon=True
+    )
+    t.start()
+
 # Email HTML Builders
 def build_application_received_email(doctor_name, registration_num, council, hospital):
     return f"""
@@ -572,7 +586,7 @@ def signup():
 @app.route('/api/login', methods=['POST'])
 def login():
     try:
-        data = request.get_json() or {}
+        data = request.get_json(silent=True) or {}
         email = data.get('email', '').strip().lower()
         password = data.get('password', '')
 
@@ -582,7 +596,10 @@ def login():
                 "message": "Email and password are required"
             }), 400
 
-        user = db_session.query(User).filter_by(email=email).first()
+        user = db_session.query(User).filter(User.email == email).first()
+        if not user:
+            user = db_session.query(User).filter(User.email.ilike(email)).first()
+
         if not user or not check_password_hash(user.password_hash, password):
             return jsonify({
                 "success": False,
@@ -757,9 +774,9 @@ def forgot_password():
         db_session.add(otp_entry)
         db_session.commit()
 
-        # Send OTP Email
+        # Send OTP Email asynchronously in background
         html_body = build_otp_email(email, otp_code)
-        sent, msg = send_email(email, "AngioLens - Password Reset Verification Code (OTP)", html_body)
+        send_email_async(email, "AngioLens - Password Reset Verification Code (OTP)", html_body)
 
         return jsonify({
             "success": True,
@@ -899,14 +916,14 @@ def submit_doctor_application():
         db_session.add(application)
         db_session.commit()
 
-        # Send automated confirmation email
+        # Send automated confirmation email asynchronously in background
         html_content = build_application_received_email(
             doctor_name=full_name,
             registration_num=registration_number,
             council=registration_authority,
             hospital=hospital_name
         )
-        send_email(email, "AngioLens - Application Received for Medical Credential Review", html_content)
+        send_email_async(email, "AngioLens - Application Received for Medical Credential Review", html_content)
 
         return jsonify({
             "success": True,
@@ -1034,14 +1051,14 @@ def approve_doctor_application(app_id):
         app_record.reviewed_at = datetime.utcnow()
         db_session.commit()
 
-        # Send Approval Email to Doctor with Username (email) and Password (mobile number)
+        # Send Approval Email to Doctor with Username (email) and Password (mobile number) asynchronously
         html_email = build_account_approved_email(
             doctor_name=app_record.full_name,
             email=app_record.email,
             mobile_number=initial_password,
             hospital=app_record.hospital_name
         )
-        send_email(app_record.email, "AngioLens - Your Doctor Account Has Been Approved!", html_email)
+        send_email_async(app_record.email, "AngioLens - Your Doctor Account Has Been Approved!", html_email)
 
         return jsonify({
             "success": True,
@@ -1068,9 +1085,9 @@ def reject_doctor_application(app_id):
         app_record.reviewed_at = datetime.utcnow()
         db_session.commit()
 
-        # Send Rejection Email
+        # Send Rejection Email asynchronously
         html_email = build_account_rejected_email(app_record.full_name, reason)
-        send_email(app_record.email, "AngioLens - Application Status Update", html_email)
+        send_email_async(app_record.email, "AngioLens - Application Status Update", html_email)
 
         return jsonify({
             "success": True,
@@ -1549,10 +1566,20 @@ def get_user_notifications():
             .all()
         )
 
+        # Batch query Patients and AnalysisResults to eliminate N+1 roundtrips
+        patient_ids = {an.patient_id for an in analyses if an.patient_id}
+        analysis_ids = {an.id for an in analyses}
+
+        patients = db_session.query(Patient).filter(Patient.id.in_(patient_ids)).all() if patient_ids else []
+        patient_map = {p.id: p for p in patients}
+
+        results = db_session.query(AnalysisResult).filter(AnalysisResult.analysis_id.in_(analysis_ids)).all() if analysis_ids else []
+        result_map = {r.analysis_id: r for r in results}
+
         notifications = []
         for an in analyses:
-            patient = db_session.query(Patient).filter_by(id=an.patient_id).first()
-            result = db_session.query(AnalysisResult).filter_by(analysis_id=an.id).first()
+            patient = patient_map.get(an.patient_id)
+            result = result_map.get(an.id)
             review = review_map.get(an.id)
 
             p_code = patient.patient_id if patient else f"PAT-{an.id:04d}"
@@ -1709,6 +1736,21 @@ def init_db_and_seed():
             for col_name, col_type in user_columns_to_add:
                 try:
                     conn.execute(text(f"ALTER TABLE users ADD COLUMN IF NOT EXISTS {col_name} {col_type};"))
+                    conn.commit()
+                except Exception:
+                    pass
+
+            # Ensure high-performance indexes exist
+            indexes_to_create = [
+                "CREATE INDEX IF NOT EXISTS idx_users_email ON users (email);",
+                "CREATE INDEX IF NOT EXISTS idx_doctor_apps_email ON doctor_applications (email);",
+                "CREATE INDEX IF NOT EXISTS idx_doctor_reviews_doctor_id ON doctor_reviews (doctor_id);",
+                "CREATE INDEX IF NOT EXISTS idx_analyses_patient_id ON analyses (patient_id);",
+                "CREATE INDEX IF NOT EXISTS idx_analysis_results_analysis_id ON analysis_results (analysis_id);",
+            ]
+            for idx_sql in indexes_to_create:
+                try:
+                    conn.execute(text(idx_sql))
                     conn.commit()
                 except Exception:
                     pass
@@ -2013,6 +2055,8 @@ def init_db_and_seed():
     except Exception as e:
         db_session.rollback()
         print(f"Warning: Database initialization encountered notice/error: {e}")
+    finally:
+        db_session.remove()
 
 @app.route('/api/init-db', methods=['POST', 'GET'])
 def api_init_db():
@@ -2037,4 +2081,4 @@ except Exception as e:
 
 if __name__ == '__main__':
     debug_mode = FLASK_ENV == 'development'
-    app.run(host='0.0.0.0', port=5000, debug=debug_mode, use_reloader=False)
+    app.run(host='0.0.0.0', port=5000, debug=debug_mode, use_reloader=debug_mode)

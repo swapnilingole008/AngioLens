@@ -52,10 +52,18 @@ export default function DoctorApplicationModal({ isOpen, onClose }) {
     if (error) setError('');
   };
 
-  const handleFakeFileUpload = (field, e) => {
+  const handleFileUpload = (fieldKey, nameKey, e) => {
     const file = e.target.files?.[0];
     if (file) {
-      setFormData(prev => ({ ...prev, [field]: file.name }));
+      const reader = new FileReader();
+      reader.onload = (uploadEvent) => {
+        setFormData(prev => ({
+          ...prev,
+          [fieldKey]: uploadEvent.target.result,
+          [nameKey]: file.name
+        }));
+      };
+      reader.readAsDataURL(file);
     }
   };
 
@@ -105,11 +113,11 @@ export default function DoctorApplicationModal({ isOpen, onClose }) {
     try {
       const payload = {
         ...formData,
-        registration_certificate: formData.registration_certificate_name || 'Medical_Registration_Certificate.pdf',
-        degree_certificate: formData.degree_certificate_name || 'MBBS_Degree_Certificate.pdf',
-        specialization_certificate: formData.specialization_certificate_name || 'Cardiology_Specialization.pdf',
-        hospital_id_doc: formData.hospital_id_doc_name || 'Hospital_Employee_ID.pdf',
-        govt_id_doc: formData.govt_id_doc_name || 'Government_Identity_Proof.pdf',
+        registration_certificate: formData.registration_certificate || formData.registration_certificate_name || 'Medical_Registration_Certificate.pdf',
+        degree_certificate: formData.degree_certificate || formData.degree_certificate_name || 'MBBS_Degree_Certificate.pdf',
+        specialization_certificate: formData.specialization_certificate || formData.specialization_certificate_name || 'Cardiology_Specialization.pdf',
+        hospital_id_doc: formData.hospital_id_doc || formData.hospital_id_doc_name || 'Hospital_Employee_ID.pdf',
+        govt_id_doc: formData.govt_id_doc || formData.govt_id_doc_name || 'Government_Identity_Proof.pdf',
       };
 
       const res = await api.submitDoctorApplication(payload);
@@ -399,7 +407,7 @@ export default function DoctorApplicationModal({ isOpen, onClose }) {
                   <input 
                     type="file" 
                     accept=".pdf,.jpg,.jpeg,.png" 
-                    onChange={(e) => handleFakeFileUpload('registration_certificate_name', e)}
+                    onChange={(e) => handleFileUpload('registration_certificate', 'registration_certificate_name', e)}
                   />
                   <Upload size={16} />
                   <span>{formData.registration_certificate_name || 'Upload Registration Certificate (PDF/JPG)'}</span>
@@ -416,7 +424,7 @@ export default function DoctorApplicationModal({ isOpen, onClose }) {
                   <input 
                     type="file" 
                     accept=".pdf,.jpg,.jpeg,.png" 
-                    onChange={(e) => handleFakeFileUpload('degree_certificate_name', e)}
+                    onChange={(e) => handleFileUpload('degree_certificate', 'degree_certificate_name', e)}
                   />
                   <Upload size={16} />
                   <span>{formData.degree_certificate_name || 'Upload Degree Certificate (PDF/JPG)'}</span>
@@ -433,7 +441,7 @@ export default function DoctorApplicationModal({ isOpen, onClose }) {
                   <input 
                     type="file" 
                     accept=".pdf,.jpg,.jpeg,.png" 
-                    onChange={(e) => handleFakeFileUpload('specialization_certificate_name', e)}
+                    onChange={(e) => handleFileUpload('specialization_certificate', 'specialization_certificate_name', e)}
                   />
                   <Upload size={16} />
                   <span>{formData.specialization_certificate_name || 'Upload Specialization Certificate'}</span>
@@ -450,7 +458,7 @@ export default function DoctorApplicationModal({ isOpen, onClose }) {
                   <input 
                     type="file" 
                     accept=".pdf,.jpg,.jpeg,.png" 
-                    onChange={(e) => handleFakeFileUpload('hospital_id_doc_name', e)}
+                    onChange={(e) => handleFileUpload('hospital_id_doc', 'hospital_id_doc_name', e)}
                   />
                   <Upload size={16} />
                   <span>{formData.hospital_id_doc_name || 'Upload Hospital Staff ID Card'}</span>
@@ -467,7 +475,7 @@ export default function DoctorApplicationModal({ isOpen, onClose }) {
                   <input 
                     type="file" 
                     accept=".pdf,.jpg,.jpeg,.png" 
-                    onChange={(e) => handleFakeFileUpload('govt_id_doc_name', e)}
+                    onChange={(e) => handleFileUpload('govt_id_doc', 'govt_id_doc_name', e)}
                   />
                   <Upload size={16} />
                   <span>{formData.govt_id_doc_name || 'Upload Government Photo ID'}</span>
@@ -483,12 +491,12 @@ export default function DoctorApplicationModal({ isOpen, onClose }) {
               <button type="submit" className="btn-burgundy submit-app-btn" disabled={loading}>
                 {loading ? (
                   <>
-                    <Loader2 size={16} className="spinner" />
-                    <span>Submitting Application...</span>
+                    <Loader2 size={18} className="spinner" />
+                    <span>Submitting Application for Review...</span>
                   </>
                 ) : (
                   <>
-                    <ShieldCheck size={16} />
+                    <ShieldCheck size={18} />
                     <span>Submit Medical Verification Application</span>
                   </>
                 )}
@@ -499,6 +507,17 @@ export default function DoctorApplicationModal({ isOpen, onClose }) {
       </div>
 
       <style>{`
+        @keyframes spin {
+          from { transform: rotate(0deg); }
+          to { transform: rotate(360deg); }
+        }
+
+        .spinner {
+          animation: spin 0.8s linear infinite !important;
+          display: inline-block !important;
+          transform-origin: center center !important;
+        }
+
         .doc-modal-overlay {
           position: fixed;
           top: 0;

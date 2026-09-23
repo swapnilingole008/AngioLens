@@ -1,7 +1,7 @@
 // AngioLens API Service
 // Minimal connector between existing React frontend and Flask PostgreSQL backend
 
-const API_BASE = 'http://127.0.0.1:5000/api';
+const API_BASE = '/api';
 
 async function request(endpoint, options = {}) {
   const url = `${API_BASE}${endpoint}`;
@@ -21,20 +21,18 @@ async function request(endpoint, options = {}) {
     }
     return data;
   } catch (err) {
-    // If direct fails (e.g. proxy environment), retry relative /api
-    if (API_BASE.startsWith('http')) {
-      try {
-        const fallbackRes = await fetch(`/api${endpoint}`, config);
-        const fallbackData = await fallbackRes.json().catch(() => ({}));
-        if (!fallbackRes.ok) {
-          throw new Error(fallbackData.message || `Request failed with status ${fallbackRes.status}`);
-        }
-        return fallbackData;
-      } catch (fallbackErr) {
-        throw new Error(err.message || 'Network error');
+    // If relative fails, fallback to direct http://127.0.0.1:5000/api
+    try {
+      const fallbackUrl = `http://127.0.0.1:5000/api${endpoint}`;
+      const fallbackRes = await fetch(fallbackUrl, config);
+      const fallbackData = await fallbackRes.json().catch(() => ({}));
+      if (!fallbackRes.ok) {
+        throw new Error(fallbackData.message || `Request failed with status ${fallbackRes.status}`);
       }
+      return fallbackData;
+    } catch (fallbackErr) {
+      throw new Error(err.message || fallbackErr.message || 'Network error');
     }
-    throw err;
   }
 }
 

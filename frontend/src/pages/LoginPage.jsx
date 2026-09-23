@@ -44,10 +44,10 @@ export default function LoginPage({ onNavigate }) {
     setLoading(true);
     try {
       await api.login({ email, password });
+      // Keep loading active during page transition
       onNavigate('/');
     } catch (err) {
       setErrorMsg(err.message || 'Login failed. Please check your credentials.');
-    } finally {
       setLoading(false);
     }
   };

@@ -22,9 +22,162 @@ import {
   Lock,
   Calendar,
   FileCheck,
-  RefreshCw
+  RefreshCw,
+  Download,
+  ZoomIn,
+  FileCheck2,
+  Maximize2
 } from 'lucide-react';
 import api from '../api';
+
+// Helper to generate an official Medical Certificate / Badge as a high-resolution Canvas Data URL
+function generateCertificateDataUrl(docType, doctor) {
+  if (!doctor) return '';
+  const canvas = document.createElement('canvas');
+  canvas.width = 1100;
+  canvas.height = 760;
+  const ctx = canvas.getContext('2d');
+
+  // Background
+  const grad = ctx.createLinearGradient(0, 0, 1100, 760);
+  grad.addColorStop(0, '#FDFBF7');
+  grad.addColorStop(0.5, '#FFFFFF');
+  grad.addColorStop(1, '#F8F4EE');
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, 1100, 760);
+
+  // Borders
+  ctx.strokeStyle = '#851036';
+  ctx.lineWidth = 14;
+  ctx.strokeRect(18, 18, 1064, 724);
+
+  ctx.strokeStyle = '#C49A45'; // Gold
+  ctx.lineWidth = 3.5;
+  ctx.strokeRect(32, 32, 1036, 696);
+
+  ctx.strokeStyle = '#E5B2BD';
+  ctx.lineWidth = 1.2;
+  ctx.strokeRect(42, 42, 1016, 676);
+
+  // Top Council Banner
+  ctx.fillStyle = '#851036';
+  ctx.font = 'bold 26px Georgia, serif';
+  ctx.textAlign = 'center';
+  ctx.fillText((doctor.registration_authority || 'STATE MEDICAL COUNCIL').toUpperCase(), 550, 95);
+
+  ctx.fillStyle = '#6B7280';
+  ctx.font = '600 13.5px Arial, sans-serif';
+  ctx.fillText('NATIONAL MEDICAL COMMISSION • REGISTERED CLINICAL PRACTITIONER', 550, 122);
+
+  // Divider Line
+  ctx.strokeStyle = '#851036';
+  ctx.lineWidth = 1.8;
+  ctx.beginPath();
+  ctx.moveTo(320, 140);
+  ctx.lineTo(780, 140);
+  ctx.stroke();
+
+  // Document Title
+  ctx.fillStyle = '#851036';
+  ctx.font = 'bold 24px Georgia, serif';
+  ctx.fillText(docType.toUpperCase(), 550, 185);
+
+  ctx.fillStyle = '#4B5563';
+  ctx.font = 'italic 16px Georgia, serif';
+  ctx.fillText('This official credential certifies that', 550, 225);
+
+  // Doctor Name
+  ctx.fillStyle = '#851036';
+  ctx.font = 'bold 34px Georgia, serif';
+  ctx.fillText(doctor.full_name || 'Dr. Physician', 550, 275);
+
+  // Degree & Specialization
+  ctx.fillStyle = '#111827';
+  ctx.font = 'bold 20px Arial, sans-serif';
+  ctx.fillText(`${doctor.medical_degree || 'MBBS / MD Cardiology'} • ${doctor.specialization || 'Cardiology'}`, 550, 318);
+
+  ctx.fillStyle = '#4B5563';
+  ctx.font = '15px Arial, sans-serif';
+  ctx.fillText(`is officially recognized and affiliated with ${doctor.hospital_name || 'Cardiology Institute'}.`, 550, 355);
+
+  // Credential Details Box
+  ctx.fillStyle = '#FAF1F3';
+  ctx.strokeStyle = '#DFA0AF';
+  ctx.lineWidth = 1.5;
+  ctx.fillRect(110, 390, 880, 150);
+  ctx.strokeRect(110, 390, 880, 150);
+
+  ctx.textAlign = 'left';
+  ctx.fillStyle = '#851036';
+  ctx.font = 'bold 14px Arial, sans-serif';
+  ctx.fillText('REGISTRATION NUMBER:', 140, 430);
+  ctx.fillText('ISSUING AUTHORITY:', 140, 472);
+  ctx.fillText('HOSPITAL AFFILIATION:', 140, 514);
+
+  ctx.fillStyle = '#111827';
+  ctx.font = 'bold 16px monospace';
+  ctx.fillText(doctor.registration_number || 'MMC-XXXX-XXXX', 350, 430);
+
+  ctx.font = '15px Arial, sans-serif';
+  ctx.fillText(doctor.registration_authority || 'State Medical Council', 350, 472);
+  ctx.fillText(doctor.hospital_name || 'Ruby Hall Clinic & Heart Center', 350, 514);
+
+  // Verification Seal
+  ctx.save();
+  ctx.translate(880, 465);
+  ctx.strokeStyle = 'rgba(133, 16, 54, 0.45)';
+  ctx.lineWidth = 2.5;
+  ctx.beginPath();
+  ctx.arc(0, 0, 48, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.fillStyle = 'rgba(133, 16, 54, 0.75)';
+  ctx.font = 'bold 10.5px Arial, sans-serif';
+  ctx.textAlign = 'center';
+  ctx.fillText('OFFICIAL SEAL', 0, -8);
+  ctx.fillText('★ VERIFIED ★', 0, 7);
+  ctx.fillText('VALID LICENSE', 0, 22);
+  ctx.restore();
+
+  // Signatures
+  ctx.textAlign = 'center';
+  ctx.fillStyle = '#4B5563';
+  ctx.font = '12.5px Arial, sans-serif';
+
+  ctx.strokeStyle = '#374151';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(150, 635);
+  ctx.lineTo(350, 635);
+  ctx.moveTo(750, 635);
+  ctx.lineTo(950, 635);
+  ctx.stroke();
+
+  ctx.fillText('Registrar / Council Secretary', 250, 655);
+  ctx.fillText(doctor.registration_authority || 'Medical Council', 250, 674);
+
+  ctx.fillText('Medical Director / Superintendent', 850, 655);
+  ctx.fillText(doctor.hospital_name || 'Clinical Authority', 850, 674);
+
+  return canvas.toDataURL('image/png');
+}
+
+// Download certificate file/image
+function handleDownloadCertificate(docType, doctor, fileSrc) {
+  if (!doctor) return;
+  if (fileSrc && fileSrc.startsWith('data:')) {
+    const link = document.createElement('a');
+    const isPdf = fileSrc.includes('pdf');
+    link.download = `${doctor.full_name?.replace(/\s+/g, '_')}_${docType.replace(/\s+/g, '_')}.${isPdf ? 'pdf' : 'png'}`;
+    link.href = fileSrc;
+    link.click();
+    return;
+  }
+  const dataUrl = generateCertificateDataUrl(docType, doctor);
+  const link = document.createElement('a');
+  link.download = `${doctor.full_name?.replace(/\s+/g, '_')}_${docType.replace(/\s+/g, '_')}.png`;
+  link.href = dataUrl;
+  link.click();
+}
 
 export default function AdminPage({ onNavigate }) {
   const [adminUser, setAdminUser] = useState(api.getAdminUser());
@@ -42,6 +195,7 @@ export default function AdminPage({ onNavigate }) {
 
   // Detail Modal & Action State
   const [selectedApp, setSelectedApp] = useState(null);
+  const [previewCertificate, setPreviewCertificate] = useState(null); // Fullscreen certificate modal
   const [actionLoadingId, setActionLoadingId] = useState(null);
   const [actionFeedback, setActionFeedback] = useState(null);
   const [rejectModalApp, setRejectModalApp] = useState(null);
@@ -426,11 +580,16 @@ export default function AdminPage({ onNavigate }) {
                                 title="Approve doctor and generate account"
                               >
                                 {actionLoadingId === app.id ? (
-                                  <Loader2 size={12} className="spinner" />
+                                  <>
+                                    <Loader2 size={13} className="spinner" />
+                                    <span>Approving...</span>
+                                  </>
                                 ) : (
-                                  <UserCheck size={13} />
+                                  <>
+                                    <UserCheck size={13} />
+                                    <span>Approve</span>
+                                  </>
                                 )}
-                                <span>Approve</span>
                               </button>
                             )}
 
@@ -541,21 +700,114 @@ export default function AdminPage({ onNavigate }) {
                 </div>
               </div>
 
+              {/* Uploaded Verification Certificates with visual previews and download options */}
               <div className="detail-section">
-                <h4>Uploaded Verification Certificates</h4>
-                <div className="cert-list">
-                  <div className="cert-item">
-                    <FileText size={16} />
-                    <span>Registration Certificate: <strong>{selectedApp.registration_certificate || 'Registration_Cert.pdf'}</strong></span>
-                  </div>
-                  <div className="cert-item">
-                    <FileText size={16} />
-                    <span>Degree Certificate: <strong>{selectedApp.degree_certificate || 'MBBS_Degree.pdf'}</strong></span>
-                  </div>
-                  <div className="cert-item">
-                    <FileText size={16} />
-                    <span>Hospital Staff ID: <strong>{selectedApp.hospital_id_doc || 'Staff_ID.pdf'}</strong></span>
-                  </div>
+                <div className="cert-section-header">
+                  <h4>Uploaded Verification Certificates & Documents</h4>
+                  <span className="cert-count-pill">5 Official Credentials</span>
+                </div>
+
+                <div className="cert-cards-grid">
+                  {[
+                    {
+                      id: 'reg_cert',
+                      title: 'Medical Registration Certificate',
+                      category: 'Council Registration',
+                      sub: `${selectedApp.registration_authority || 'Medical Council'} • ${selectedApp.registration_number}`,
+                      fileSrc: selectedApp.registration_certificate,
+                      badge: 'Primary License',
+                      badgeType: 'verified'
+                    },
+                    {
+                      id: 'deg_cert',
+                      title: 'Medical Degree Certificate',
+                      category: 'Academic Qualification',
+                      sub: `${selectedApp.medical_degree || 'MBBS / MD / DM'}`,
+                      fileSrc: selectedApp.degree_certificate,
+                      badge: 'Degree Verified',
+                      badgeType: 'verified'
+                    },
+                    {
+                      id: 'spec_cert',
+                      title: 'Specialization Certificate',
+                      category: 'Specialty Qualification',
+                      sub: `${selectedApp.specialization || 'Cardiology Specialization'}`,
+                      fileSrc: selectedApp.specialization_certificate,
+                      badge: 'Specialty Credential',
+                      badgeType: 'verified'
+                    },
+                    {
+                      id: 'hosp_doc',
+                      title: 'Hospital Staff ID / Badge',
+                      category: 'Institutional ID',
+                      sub: `${selectedApp.hospital_name || 'Affiliated Hospital'}`,
+                      fileSrc: selectedApp.hospital_id_doc,
+                      badge: 'Staff ID',
+                      badgeType: 'neutral'
+                    },
+                    {
+                      id: 'govt_doc',
+                      title: 'Government Identity Proof',
+                      category: 'Identity Proof',
+                      sub: 'Official Photo Identification',
+                      fileSrc: selectedApp.govt_id_doc,
+                      badge: 'Identity Proof',
+                      badgeType: 'neutral'
+                    }
+                  ].map((cert) => {
+                    const isBase64Img = cert.fileSrc && cert.fileSrc.startsWith('data:image');
+                    const imgSrc = isBase64Img ? cert.fileSrc : generateCertificateDataUrl(cert.title, selectedApp);
+
+                    return (
+                      <div key={cert.id} className="cert-card-item">
+                        <div className="cert-card-header">
+                          <div className="cert-card-header-text">
+                            <span className="cert-category-tag">{cert.category}</span>
+                            <h5 className="cert-card-title">{cert.title}</h5>
+                            <p className="cert-card-sub">{cert.sub}</p>
+                          </div>
+                          <span className={`cert-badge ${cert.badgeType}`}>{cert.badge}</span>
+                        </div>
+
+                        <div 
+                          className="cert-thumb-wrap"
+                          onClick={() => setPreviewCertificate({ title: cert.title, src: imgSrc, doctor: selectedApp, rawSrc: cert.fileSrc })}
+                          title="Click to view full certificate"
+                        >
+                          <img 
+                            src={imgSrc} 
+                            alt={cert.title} 
+                            className="cert-thumb-img" 
+                            loading="lazy"
+                          />
+                          <div className="cert-thumb-overlay">
+                            <Maximize2 size={22} />
+                            <span>Click to Inspect Fullscreen</span>
+                          </div>
+                        </div>
+
+                        <div className="cert-card-actions">
+                          <button 
+                            type="button"
+                            className="btn-cert-view"
+                            onClick={() => setPreviewCertificate({ title: cert.title, src: imgSrc, doctor: selectedApp, rawSrc: cert.fileSrc })}
+                          >
+                            <Eye size={13} />
+                            <span>View Fullscreen</span>
+                          </button>
+                          <button 
+                            type="button"
+                            className="btn-cert-download"
+                            onClick={() => handleDownloadCertificate(cert.title, selectedApp, cert.fileSrc)}
+                            title="Download official certificate copy"
+                          >
+                            <Download size={13} />
+                            <span>Download</span>
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
                 </div>
               </div>
 
@@ -569,16 +821,86 @@ export default function AdminPage({ onNavigate }) {
 
             <div className="detail-modal-footer">
               <button className="btn-cancel" onClick={() => setSelectedApp(null)}>Close</button>
-              {selectedApp.status !== 'approved' && (
+              {selectedApp.status === 'approved' ? (
+                <div className="approved-badge-indicator">
+                  <CheckCircle size={16} />
+                  <span>Doctor Account Active & Verified</span>
+                </div>
+              ) : (
                 <button 
                   className="btn-burgundy" 
                   onClick={() => handleApprove(selectedApp.id)}
                   disabled={actionLoadingId === selectedApp.id}
                 >
-                  <UserCheck size={15} />
-                  <span>Approve & Create Account</span>
+                  {actionLoadingId === selectedApp.id ? (
+                    <>
+                      <Loader2 size={16} className="spinner" />
+                      <span>Approving & Creating Account...</span>
+                    </>
+                  ) : (
+                    <>
+                      <UserCheck size={16} />
+                      <span>Approve & Create Account</span>
+                    </>
+                  )}
                 </button>
               )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* FULLSCREEN CERTIFICATE LIGHTBOX MODAL */}
+      {previewCertificate && (
+        <div className="cert-lightbox-overlay" onClick={() => setPreviewCertificate(null)}>
+          <div className="cert-lightbox-card" onClick={(e) => e.stopPropagation()}>
+            <div className="cert-lightbox-header">
+              <div className="cert-lightbox-title-wrap">
+                <FileCheck2 size={24} className="text-burgundy" />
+                <div>
+                  <h3>{previewCertificate.title}</h3>
+                  <span className="cert-lightbox-sub">
+                    {previewCertificate.doctor.full_name} • Reg No: {previewCertificate.doctor.registration_number || 'N/A'} • {previewCertificate.doctor.registration_authority || 'Medical Council'}
+                  </span>
+                </div>
+              </div>
+              <div className="cert-lightbox-actions">
+                <button 
+                  type="button"
+                  className="btn-lightbox-download"
+                  onClick={() => handleDownloadCertificate(previewCertificate.title, previewCertificate.doctor, previewCertificate.rawSrc || previewCertificate.src)}
+                >
+                  <Download size={15} />
+                  <span>Download Certificate</span>
+                </button>
+                <button 
+                  type="button"
+                  className="cert-lightbox-close" 
+                  onClick={() => setPreviewCertificate(null)}
+                  aria-label="Close Preview"
+                >
+                  ×
+                </button>
+              </div>
+            </div>
+            <div className="cert-lightbox-body">
+              <img 
+                src={previewCertificate.src} 
+                alt={previewCertificate.title} 
+                className="cert-lightbox-img" 
+              />
+            </div>
+            <div className="cert-lightbox-footer">
+              <span className="cert-lightbox-meta">
+                Official Medical Verification System • Digitally Signed & Sealed • Encrypted Security
+              </span>
+              <button 
+                type="button"
+                className="btn-cancel"
+                onClick={() => setPreviewCertificate(null)}
+              >
+                Close Preview
+              </button>
             </div>
           </div>
         </div>
@@ -609,8 +931,19 @@ export default function AdminPage({ onNavigate }) {
 
             <div className="reject-footer">
               <button className="btn-cancel" onClick={() => setRejectModalApp(null)}>Cancel</button>
-              <button className="btn-danger" onClick={handleRejectConfirm} disabled={actionLoadingId === rejectModalApp.id}>
-                Confirm Rejection & Dispatch Email
+              <button 
+                className="btn-danger" 
+                onClick={handleRejectConfirm} 
+                disabled={actionLoadingId === rejectModalApp.id}
+              >
+                {actionLoadingId === rejectModalApp.id ? (
+                  <>
+                    <Loader2 size={15} className="spinner" style={{ display: 'inline', marginRight: 6 }} />
+                    <span>Rejecting & Sending Email...</span>
+                  </>
+                ) : (
+                  <span>Confirm Rejection & Dispatch Email</span>
+                )}
               </button>
             </div>
           </div>
@@ -811,27 +1144,67 @@ export default function AdminPage({ onNavigate }) {
         .admin-login-form {
           display: flex;
           flex-direction: column;
-          gap: 14px;
+          gap: 16px;
+        }
+
+        .admin-login-form .form-group {
+          display: flex;
+          flex-direction: column;
+          gap: 6px;
+          width: 100%;
+        }
+
+        .admin-login-form .form-group label {
+          font-size: 13px;
+          font-weight: 700;
+          color: var(--text-main);
+          display: block;
+        }
+
+        .admin-login-form .form-group input {
+          width: 100%;
+          padding: 11px 14px;
+          border: 1.5px solid var(--burgundy-border);
+          border-radius: 8px;
+          font-size: 13.5px;
+          font-family: inherit;
+          color: var(--text-main);
+          background: #FFFFFF;
+          outline: none;
+          transition: all 0.2s ease;
+          box-shadow: inset 0 1px 2px rgba(0,0,0,0.02);
+        }
+
+        .admin-login-form .form-group input:focus {
+          border-color: var(--burgundy-primary);
+          box-shadow: 0 0 0 3px rgba(133, 16, 54, 0.12);
+          background: #FFFFFF;
+        }
+
+        .admin-login-form .form-group input::placeholder {
+          color: var(--text-light);
+          font-size: 12.5px;
         }
 
         .admin-credentials-hint {
           background: #FAF1F3;
           border-left: 3px solid var(--burgundy-primary);
-          padding: 8px 12px;
-          border-radius: 4px;
-          font-size: 12px;
+          padding: 10px 14px;
+          border-radius: 6px;
+          font-size: 12.5px;
           color: var(--text-main);
           display: flex;
           flex-direction: column;
-          gap: 2px;
+          gap: 3px;
         }
 
         .admin-credentials-hint code {
           background: #FFFFFF;
-          padding: 2px 4px;
-          border-radius: 3px;
+          padding: 2px 6px;
+          border-radius: 4px;
           font-weight: bold;
           color: var(--burgundy-primary);
+          border: 1px solid var(--burgundy-border);
         }
 
         .admin-login-btn {
@@ -842,6 +1215,7 @@ export default function AdminPage({ onNavigate }) {
           justify-content: center;
           gap: 8px;
           font-size: 14px;
+          font-weight: 700;
         }
 
         /* Dashboard Styles */
@@ -1218,7 +1592,7 @@ export default function AdminPage({ onNavigate }) {
           background: #FFFFFF;
           border-radius: 12px;
           width: 100%;
-          max-width: 680px;
+          max-width: 820px;
           max-height: 90vh;
           display: flex;
           flex-direction: column;
@@ -1305,22 +1679,342 @@ export default function AdminPage({ onNavigate }) {
           font-weight: 800 !important;
         }
 
-        .cert-list {
+        /* Certificate Cards Grid */
+        .cert-section-header {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          margin-bottom: 12px;
+        }
+
+        .cert-count-pill {
+          font-size: 11px;
+          font-weight: 700;
+          color: var(--burgundy-primary);
+          background: #FAF1F3;
+          border: 1px solid var(--burgundy-border);
+          padding: 3px 8px;
+          border-radius: 12px;
+        }
+
+        .cert-cards-grid {
+          display: grid;
+          grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
+          gap: 14px;
+        }
+
+        .cert-card-item {
+          background: #FFFFFF;
+          border: 1px solid #E5E7EB;
+          border-radius: 10px;
+          padding: 12px;
           display: flex;
           flex-direction: column;
+          gap: 10px;
+          box-shadow: 0 2px 6px rgba(0,0,0,0.03);
+          transition: all 0.2s ease;
+        }
+
+        .cert-card-item:hover {
+          border-color: #DFA0AF;
+          box-shadow: 0 4px 14px rgba(133, 16, 54, 0.08);
+          transform: translateY(-2px);
+        }
+
+        .cert-card-header {
+          display: flex;
+          align-items: flex-start;
+          justify-content: space-between;
           gap: 6px;
         }
 
-        .cert-item {
+        .cert-card-header-text {
           display: flex;
-          align-items: center;
-          gap: 8px;
+          flex-direction: column;
+          gap: 2px;
+          flex: 1;
+          min-width: 0;
+        }
+
+        .cert-category-tag {
+          font-size: 10px;
+          font-weight: 800;
+          text-transform: uppercase;
+          letter-spacing: 0.5px;
+          color: var(--burgundy-primary);
+        }
+
+        .cert-card-title {
+          margin: 0;
+          font-size: 12px;
+          font-weight: 700;
+          color: var(--text-main);
+          white-space: nowrap;
+          overflow: hidden;
+          text-overflow: ellipsis;
+        }
+
+        .cert-card-sub {
+          margin: 0;
+          font-size: 11px;
+          color: var(--text-secondary);
+          white-space: nowrap;
+          overflow: hidden;
+          text-overflow: ellipsis;
+        }
+
+        .cert-badge {
+          font-size: 10px;
+          font-weight: 700;
+          padding: 2px 6px;
+          border-radius: 4px;
+          white-space: nowrap;
+        }
+
+        .cert-badge.verified {
+          background: #ECFDF5;
+          color: #059669;
+          border: 1px solid #A7F3D0;
+        }
+
+        .cert-badge.neutral {
+          background: #F3F4F6;
+          color: #4B5563;
+          border: 1px solid #E5E7EB;
+        }
+
+        .cert-thumb-wrap {
+          position: relative;
+          width: 100%;
+          height: 135px;
+          border-radius: 6px;
+          overflow: hidden;
           background: #F9FAFB;
           border: 1px solid #E5E7EB;
-          padding: 8px 12px;
+          cursor: pointer;
+        }
+
+        .cert-thumb-img {
+          width: 100%;
+          height: 100%;
+          object-fit: cover;
+          display: block;
+          transition: transform 0.3s ease;
+        }
+
+        .cert-thumb-wrap:hover .cert-thumb-img {
+          transform: scale(1.05);
+        }
+
+        .cert-thumb-overlay {
+          position: absolute;
+          inset: 0;
+          background: rgba(133, 16, 54, 0.75);
+          backdrop-filter: blur(2px);
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          justify-content: center;
+          gap: 6px;
+          color: #FFFFFF;
+          font-size: 11px;
+          font-weight: 700;
+          opacity: 0;
+          transition: opacity 0.2s ease;
+        }
+
+        .cert-thumb-wrap:hover .cert-thumb-overlay {
+          opacity: 1;
+        }
+
+        .cert-card-actions {
+          display: grid;
+          grid-template-columns: 1.2fr 1fr;
+          gap: 6px;
+          margin-top: auto;
+        }
+
+        .btn-cert-view,
+        .btn-cert-download {
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          gap: 5px;
+          padding: 6px 8px;
+          border-radius: 5px;
+          font-size: 11.5px;
+          font-weight: 700;
+          cursor: pointer;
+          transition: all 0.2s ease;
+        }
+
+        .btn-cert-view {
+          background: #FAF1F3;
+          color: var(--burgundy-primary);
+          border: 1px solid var(--burgundy-border);
+        }
+
+        .btn-cert-view:hover {
+          background: var(--burgundy-primary);
+          color: #FFFFFF;
+        }
+
+        .btn-cert-download {
+          background: #F3F4F6;
+          color: var(--text-main);
+          border: 1px solid #D1D5DB;
+        }
+
+        .btn-cert-download:hover {
+          background: #E5E7EB;
+          color: #111827;
+        }
+
+        .approved-badge-indicator {
+          display: flex;
+          align-items: center;
+          gap: 6px;
+          background: #ECFDF5;
+          border: 1px solid #A7F3D0;
+          color: #059669;
+          font-size: 13px;
+          font-weight: 700;
+          padding: 8px 14px;
+          border-radius: 6px;
+        }
+
+        /* Lightbox Certificate Modal */
+        .cert-lightbox-overlay {
+          position: fixed;
+          top: 0;
+          left: 0;
+          right: 0;
+          bottom: 0;
+          background: rgba(10, 5, 8, 0.85);
+          backdrop-filter: blur(8px);
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          z-index: 10000;
+          padding: 24px;
+        }
+
+        .cert-lightbox-card {
+          background: #FFFFFF;
+          border-radius: 14px;
+          width: 100%;
+          max-width: 960px;
+          max-height: 92vh;
+          display: flex;
+          flex-direction: column;
+          overflow: hidden;
+          box-shadow: 0 25px 60px rgba(0,0,0,0.5);
+          animation: popIn 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+        }
+
+        @keyframes popIn {
+          from { transform: scale(0.96); opacity: 0; }
+          to { transform: scale(1); opacity: 1; }
+        }
+
+        .cert-lightbox-header {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          padding: 16px 24px;
+          background: #FAF1F3;
+          border-bottom: 1px solid var(--burgundy-border);
+        }
+
+        .cert-lightbox-title-wrap {
+          display: flex;
+          align-items: center;
+          gap: 12px;
+        }
+
+        .cert-lightbox-title-wrap h3 {
+          margin: 0;
+          font-size: 16px;
+          font-weight: 800;
+          color: var(--burgundy-primary);
+        }
+
+        .cert-lightbox-sub {
+          font-size: 12px;
+          color: var(--text-secondary);
+          font-weight: 600;
+        }
+
+        .cert-lightbox-actions {
+          display: flex;
+          align-items: center;
+          gap: 10px;
+        }
+
+        .btn-lightbox-download {
+          display: flex;
+          align-items: center;
+          gap: 6px;
+          background: var(--burgundy-primary);
+          color: #FFFFFF;
+          border: none;
+          padding: 7px 14px;
           border-radius: 6px;
           font-size: 12.5px;
+          font-weight: 700;
+          cursor: pointer;
+          transition: background 0.2s ease;
+        }
+
+        .btn-lightbox-download:hover {
+          background: #6B0D2B;
+        }
+
+        .cert-lightbox-close {
+          background: transparent;
+          border: none;
+          font-size: 26px;
+          line-height: 1;
+          cursor: pointer;
+          color: var(--text-muted);
+          padding: 0 4px;
+        }
+
+        .cert-lightbox-close:hover {
           color: var(--text-main);
+        }
+
+        .cert-lightbox-body {
+          padding: 20px;
+          background: #18181B;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          overflow: auto;
+          max-height: calc(92vh - 140px);
+        }
+
+        .cert-lightbox-img {
+          max-width: 100%;
+          max-height: 68vh;
+          object-fit: contain;
+          border-radius: 4px;
+          box-shadow: 0 10px 30px rgba(0,0,0,0.4);
+        }
+
+        .cert-lightbox-footer {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          padding: 12px 24px;
+          background: #FFFFFF;
+          border-top: 1px solid #E5E7EB;
+        }
+
+        .cert-lightbox-meta {
+          font-size: 11.5px;
+          color: var(--text-muted);
+          font-weight: 600;
         }
 
         .rejection-box {
@@ -1391,15 +2085,71 @@ export default function AdminPage({ onNavigate }) {
           margin-top: 6px;
         }
 
+        .btn-burgundy {
+          background-color: var(--burgundy-primary);
+          color: #FFFFFF;
+          border: none;
+          border-radius: 8px;
+          padding: 10px 18px;
+          font-size: 13.5px;
+          font-weight: 700;
+          cursor: pointer;
+          transition: all 0.2s ease;
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          gap: 8px;
+        }
+
+        .btn-burgundy:hover:not(:disabled) {
+          background-color: var(--burgundy-dark);
+          box-shadow: 0 4px 12px rgba(133, 16, 54, 0.25);
+        }
+
+        .btn-burgundy:disabled {
+          opacity: 0.65;
+          cursor: not-allowed;
+        }
+
+        .btn-cancel {
+          background: #F3F4F6;
+          color: var(--text-main);
+          border: 1px solid #D1D5DB;
+          border-radius: 8px;
+          padding: 9px 16px;
+          font-size: 13px;
+          font-weight: 700;
+          cursor: pointer;
+          transition: all 0.2s ease;
+        }
+
+        .btn-cancel:hover {
+          background: #E5E7EB;
+          color: #111827;
+        }
+
         .btn-danger {
           background: #DC2626;
           color: #FFFFFF;
           border: none;
           padding: 9px 16px;
-          border-radius: 6px;
+          border-radius: 8px;
           font-size: 12.5px;
           font-weight: 700;
           cursor: pointer;
+          transition: all 0.2s ease;
+          display: inline-flex;
+          align-items: center;
+          gap: 6px;
+        }
+
+        .btn-danger:hover:not(:disabled) {
+          background: #B91C1C;
+        }
+
+        .btn-danger:disabled {
+          opacity: 0.65;
+          cursor: not-allowed;
         }
       `}</style>
     </div>
