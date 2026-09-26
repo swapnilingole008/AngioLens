@@ -2,6 +2,27 @@ import React, { useRef, useEffect, useState, useMemo } from 'react';
 import { ZoomIn, ZoomOut, RotateCcw, Activity, MousePointerClick } from 'lucide-react';
 
 /**
+ * Safe rounded rectangle drawer with polyfill for older browser versions
+ */
+function drawRoundRect(ctx, x, y, width, height, radius = 6) {
+  if (typeof ctx.roundRect === 'function') {
+    ctx.roundRect(x, y, width, height, radius);
+  } else {
+    ctx.beginPath();
+    ctx.moveTo(x + radius, y);
+    ctx.lineTo(x + width - radius, y);
+    ctx.arcTo(x + width, y, x + width, y + height, radius);
+    ctx.lineTo(x + width, y + height - radius);
+    ctx.arcTo(x + width, y + height, x, y + height, radius);
+    ctx.lineTo(x + radius, y + height);
+    ctx.arcTo(x, y + height, x, y, radius);
+    ctx.lineTo(x, y + radius);
+    ctx.arcTo(x, y, x + width, y, radius);
+    ctx.closePath();
+  }
+}
+
+/**
  * ECGWaveformViewer
  * 
  * Interactive clinical ECG waveform canvas that:
@@ -23,50 +44,89 @@ export default function ECGWaveformViewer({
 
   // Time window view state for zooming and panning across the recording
   const [viewStart, setViewStart] = useState(0); // in seconds
-  const [viewDuration, setViewDuration] = useState(duration > 0 ? Math.min(duration, 5.0) : 5.0); // display 5s by default
+  const [viewDuration, setViewDuration] = useState(duration > 0 ? Math.min(duration, 5.0) : 5.0);
   const [hoveredPeakIndex, setHoveredPeakIndex] = useState(null);
-  const [mousePos, setMousePos] = useState(null);
 
-  // Determine total signal time
+  // Normalize waveform samples to guaranteed { time, amplitude } format
+  const normalizedSamples = useMemo(() => {
+    if (!Array.isArray(waveformSamples)) return [];
+    return waveformSamples.map((pt, idx) => {
+      const time = Number(pt.time ?? pt.t ?? (idx / samplingRate));
+      const amplitude = Number(pt.amplitude ?? pt.val ?? pt.voltage ?? 0);
+      return {
+        time: isNaN(time) ? idx / samplingRate : time,
+        amplitude: isNaN(amplitude) ? 0 : amplitude,
+      };
+    });
+  }, [waveformSamples, samplingRate]);
+
+  // Normalize R-peaks to guaranteed fields
+  const normalizedPeaks = useMemo(() => {
+    if (!Array.isArray(rPeaks)) return [];
+    return rPeaks.map((p, idx) => {
+      const t = Number(p.timestamp ?? p.r_peak_timestamp ?? p.trigger_timestamp ?? 0);
+      const conf = Number(p.confidence ?? p.confidence_decimal ?? 0.999);
+      const peakNum = Number(p.peak_num ?? p.r_peak_number ?? (idx + 1));
+      const frameNum = Number(p.frame_number ?? p.selected_frame ?? Math.max(1, Math.round(t * 30) + 1));
+      const frameT = Number(p.frame_timestamp ?? ((frameNum - 1) / 30));
+
+      return {
+        ...p,
+        peak_num: peakNum,
+        timestamp: isNaN(t) ? 0 : t,
+        confidence: isNaN(conf) ? 0.999 : conf,
+        frame_number: frameNum,
+        frame_timestamp: isNaN(frameT) ? t : frameT,
+      };
+    });
+  }, [rPeaks]);
+
+  // Determine total signal time safely
   const totalTime = useMemo(() => {
-    if (duration && duration > 0) return duration;
-    if (waveformSamples.length > 0) {
-      return waveformSamples[waveformSamples.length - 1].time || (waveformSamples.length / samplingRate);
+    if (duration && duration > 0 && !isNaN(duration)) return duration;
+    if (normalizedSamples.length > 0) {
+      const last = normalizedSamples[normalizedSamples.length - 1];
+      if (last.time && !isNaN(last.time) && last.time > 0) return last.time;
     }
     return 10.0;
-  }, [duration, waveformSamples, samplingRate]);
+  }, [duration, normalizedSamples]);
 
   // Adjust view bounds safely
   useEffect(() => {
     if (totalTime < viewDuration) {
       setViewDuration(totalTime);
     }
-  }, [totalTime]);
+  }, [totalTime, viewDuration]);
 
-  // When selectedPeak changes from outside, scroll view if necessary to keep peak visible
+  // Scroll view if necessary when selectedPeak changes
   useEffect(() => {
-    if (rPeaks && rPeaks[selectedPeakIndex]) {
-      const peakTime = rPeaks[selectedPeakIndex].timestamp;
-      if (peakTime < viewStart || peakTime > viewStart + viewDuration) {
-        const newStart = Math.max(0, Math.min(totalTime - viewDuration, peakTime - viewDuration / 2));
-        setViewStart(newStart);
+    if (normalizedPeaks && normalizedPeaks[selectedPeakIndex]) {
+      const peakTime = normalizedPeaks[selectedPeakIndex].timestamp;
+      if (!isNaN(peakTime)) {
+        if (peakTime < viewStart || peakTime > viewStart + viewDuration) {
+          const newStart = Math.max(0, Math.min(totalTime - viewDuration, peakTime - viewDuration / 2));
+          if (!isNaN(newStart)) {
+            setViewStart(newStart);
+          }
+        }
       }
     }
-  }, [selectedPeakIndex, rPeaks, viewDuration, totalTime]);
+  }, [selectedPeakIndex, normalizedPeaks, viewDuration, totalTime, viewStart]);
 
   // Compute min and max amplitude for vertical scaling
   const { minAmp, maxAmp } = useMemo(() => {
-    if (!waveformSamples || waveformSamples.length === 0) {
+    if (!normalizedSamples || normalizedSamples.length === 0) {
       return { minAmp: -1.0, maxAmp: 2.0 };
     }
     let min = Infinity;
     let max = -Infinity;
-    // Sample evenly across samples to get min/max
-    const step = Math.max(1, Math.floor(waveformSamples.length / 500));
-    for (let i = 0; i < waveformSamples.length; i += step) {
-      const v = waveformSamples[i].amplitude;
-      if (v < min) min = v;
-      if (v > max) max = v;
+    const step = Math.max(1, Math.floor(normalizedSamples.length / 500));
+    for (let i = 0; i < normalizedSamples.length; i += step) {
+      const v = normalizedSamples[i].amplitude;
+      if (!isNaN(v)) {
+        if (v < min) min = v;
+        if (v > max) max = v;
+      }
     }
     if (min === Infinity || max === -Infinity || max - min < 0.2) {
       min = -1.0;
@@ -74,7 +134,7 @@ export default function ECGWaveformViewer({
     }
     const padding = (max - min) * 0.25;
     return { minAmp: min - padding, maxAmp: max + padding };
-  }, [waveformSamples]);
+  }, [normalizedSamples]);
 
   // Canvas drawing loop
   useEffect(() => {
@@ -83,198 +143,208 @@ export default function ECGWaveformViewer({
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
-    // Handle high DPI displays
-    const rect = canvas.getBoundingClientRect();
-    const dpr = window.devicePixelRatio || 1;
-    const width = rect.width;
-    const height = rect.height;
+    try {
+      const rect = canvas.getBoundingClientRect();
+      const dpr = window.devicePixelRatio || 1;
+      const width = rect.width || 600;
+      const height = rect.height || 240;
 
-    canvas.width = width * dpr;
-    canvas.height = height * dpr;
-    ctx.scale(dpr, dpr);
+      canvas.width = width * dpr;
+      canvas.height = height * dpr;
+      ctx.scale(dpr, dpr);
 
-    // 1. Draw ECG Paper Background
-    ctx.fillStyle = '#FFF8FA'; // Subtle warm medical tint
-    ctx.fillRect(0, 0, width, height);
+      // 1. Draw ECG Paper Background
+      ctx.fillStyle = '#FFF8FA';
+      ctx.fillRect(0, 0, width, height);
 
-    // 2. Draw Clinical ECG Grid Lines
-    // Standard ECG: small square = 0.04s, large square = 0.2s
-    const viewEnd = viewStart + viewDuration;
-    const timeSpan = viewDuration;
+      // 2. Draw Clinical ECG Grid Lines
+      const safeViewStart = isNaN(viewStart) ? 0 : viewStart;
+      const safeViewDuration = isNaN(viewDuration) || viewDuration <= 0 ? 5.0 : viewDuration;
+      const viewEnd = safeViewStart + safeViewDuration;
+      const timeSpan = safeViewDuration;
 
-    // Helper functions for mapping (time, amp) -> (x, y)
-    const timeToX = (t) => ((t - viewStart) / timeSpan) * width;
-    const ampToY = (a) => height - ((a - minAmp) / (maxAmp - minAmp)) * (height - 30) - 15;
+      const timeToX = (t) => ((t - safeViewStart) / timeSpan) * width;
+      const ampToY = (a) => {
+        const denom = maxAmp - minAmp || 1;
+        return height - ((a - minAmp) / denom) * (height - 30) - 15;
+      };
 
-    // Minor grid (every 0.04 sec)
-    ctx.lineWidth = 0.5;
-    ctx.strokeStyle = '#FAD2DC';
-    const minorStep = 0.04;
-    const firstMinor = Math.floor(viewStart / minorStep) * minorStep;
-    ctx.beginPath();
-    for (let t = firstMinor; t <= viewEnd; t += minorStep) {
-      const x = timeToX(t);
-      if (x >= 0 && x <= width) {
-        ctx.moveTo(x, 0);
-        ctx.lineTo(x, height);
-      }
-    }
-    ctx.stroke();
-
-    // Major grid (every 0.20 sec)
-    ctx.lineWidth = 1.0;
-    ctx.strokeStyle = '#F4A7B9';
-    const majorStep = 0.2;
-    const firstMajor = Math.floor(viewStart / majorStep) * majorStep;
-    ctx.beginPath();
-    for (let t = firstMajor; t <= viewEnd; t += majorStep) {
-      const x = timeToX(t);
-      if (x >= 0 && x <= width) {
-        ctx.moveTo(x, 0);
-        ctx.lineTo(x, height);
-      }
-    }
-    // Horizontal grid lines
-    const ySteps = 10;
-    for (let i = 0; i <= ySteps; i++) {
-      const y = (i / ySteps) * height;
-      ctx.moveTo(0, y);
-      ctx.lineTo(width, y);
-    }
-    ctx.stroke();
-
-    // 3. Draw ECG Waveform
-    if (waveformSamples.length > 0) {
+      // Minor grid (every 0.04 sec)
+      ctx.lineWidth = 0.5;
+      ctx.strokeStyle = '#FAD2DC';
+      const minorStep = 0.04;
+      const firstMinor = Math.floor(safeViewStart / minorStep) * minorStep;
       ctx.beginPath();
-      ctx.lineWidth = 2.2;
-      ctx.strokeStyle = '#851036'; // AngioLens Primary Deep Burgundy
-      ctx.lineCap = 'round';
-      ctx.lineJoin = 'round';
-
-      let started = false;
-      for (let i = 0; i < waveformSamples.length; i++) {
-        const pt = waveformSamples[i];
-        if (pt.time < viewStart - 0.1) continue;
-        if (pt.time > viewEnd + 0.1) break;
-
-        const x = timeToX(pt.time);
-        const y = ampToY(pt.amplitude);
-
-        if (!started) {
-          ctx.moveTo(x, y);
-          started = true;
-        } else {
-          ctx.lineTo(x, y);
+      for (let t = firstMinor; t <= viewEnd; t += minorStep) {
+        const x = timeToX(t);
+        if (x >= 0 && x <= width) {
+          ctx.moveTo(x, 0);
+          ctx.lineTo(x, height);
         }
       }
       ctx.stroke();
-    }
 
-    // 4. Draw Detected R-Peaks
-    rPeaks.forEach((peak, idx) => {
-      if (peak.timestamp < viewStart - 0.2 || peak.timestamp > viewEnd + 0.2) return;
-
-      const peakX = timeToX(peak.timestamp);
-      // Interpolate amplitude from signal if not directly on peak
-      let peakAmp = maxAmp * 0.7;
-      if (waveformSamples.length > 0) {
-        // Find closest sample
-        const closest = waveformSamples.reduce((prev, curr) => 
-          Math.abs(curr.time - peak.timestamp) < Math.abs(prev.time - peak.timestamp) ? curr : prev
-        );
-        peakAmp = closest.amplitude;
+      // Major grid (every 0.20 sec)
+      ctx.lineWidth = 1.0;
+      ctx.strokeStyle = '#F4A7B9';
+      const majorStep = 0.2;
+      const firstMajor = Math.floor(safeViewStart / majorStep) * majorStep;
+      ctx.beginPath();
+      for (let t = firstMajor; t <= viewEnd; t += majorStep) {
+        const x = timeToX(t);
+        if (x >= 0 && x <= width) {
+          ctx.moveTo(x, 0);
+          ctx.lineTo(x, height);
+        }
       }
-      const peakY = ampToY(peakAmp);
-
-      const isSelected = idx === selectedPeakIndex;
-      const isHovered = idx === hoveredPeakIndex;
-
-      // Vertical guide line down from peak
-      ctx.save();
-      ctx.beginPath();
-      ctx.setLineDash([4, 4]);
-      ctx.lineWidth = isSelected ? 2 : 1;
-      ctx.strokeStyle = isSelected ? '#C92A54' : (isHovered ? '#851036' : 'rgba(133, 16, 54, 0.4)');
-      ctx.moveTo(peakX, peakY);
-      ctx.lineTo(peakX, height - 20);
+      // Horizontal grid lines
+      const ySteps = 10;
+      for (let i = 0; i <= ySteps; i++) {
+        const y = (i / ySteps) * height;
+        ctx.moveTo(0, y);
+        ctx.lineTo(width, y);
+      }
       ctx.stroke();
-      ctx.restore();
 
-      // Pulsing outer halo for selected peak
-      if (isSelected) {
+      // 3. Draw ECG Waveform
+      if (normalizedSamples.length > 0) {
         ctx.beginPath();
-        ctx.arc(peakX, peakY, 14, 0, Math.PI * 2);
-        ctx.fillStyle = 'rgba(201, 42, 84, 0.25)';
-        ctx.fill();
+        ctx.lineWidth = 2.2;
+        ctx.strokeStyle = '#851036';
+        ctx.lineCap = 'round';
+        ctx.lineJoin = 'round';
 
-        ctx.beginPath();
-        ctx.arc(peakX, peakY, 9, 0, Math.PI * 2);
-        ctx.fillStyle = 'rgba(133, 16, 54, 0.4)';
-        ctx.fill();
+        let started = false;
+        for (let i = 0; i < normalizedSamples.length; i++) {
+          const pt = normalizedSamples[i];
+          if (pt.time < safeViewStart - 0.1) continue;
+          if (pt.time > viewEnd + 0.1) break;
+
+          const x = timeToX(pt.time);
+          const y = ampToY(pt.amplitude);
+
+          if (!isNaN(x) && !isNaN(y)) {
+            if (!started) {
+              ctx.moveTo(x, y);
+              started = true;
+            } else {
+              ctx.lineTo(x, y);
+            }
+          }
+        }
+        ctx.stroke();
       }
 
-      // Pin circle on peak
-      ctx.beginPath();
-      ctx.arc(peakX, peakY, isSelected ? 6.5 : (isHovered ? 5.5 : 4.5), 0, Math.PI * 2);
-      ctx.fillStyle = isSelected ? '#C92A54' : (isHovered ? '#851036' : '#851036');
-      ctx.fill();
-      ctx.lineWidth = 2;
-      ctx.strokeStyle = '#FFFFFF';
-      ctx.stroke();
+      // 4. Draw Detected R-Peaks
+      normalizedPeaks.forEach((peak, idx) => {
+        const peakT = peak.timestamp;
+        if (isNaN(peakT) || peakT < safeViewStart - 0.2 || peakT > viewEnd + 0.2) return;
 
-      // Text Badge above R-peak: R1, R2...
-      const badgeY = Math.max(24, peakY - (isSelected ? 26 : 20));
-      const peakLabel = `R${peak.peak_num || (idx + 1)}`;
-      ctx.font = isSelected ? 'bold 13px Inter, sans-serif' : 'bold 11px Inter, sans-serif';
-      const textWidth = ctx.measureText(peakLabel).width;
-      const badgeWidth = textWidth + 14;
-      const badgeHeight = isSelected ? 20 : 17;
+        const peakX = timeToX(peakT);
+        let peakAmp = maxAmp * 0.7;
+        if (normalizedSamples.length > 0) {
+          const closest = normalizedSamples.reduce((prev, curr) =>
+            Math.abs(curr.time - peakT) < Math.abs(prev.time - peakT) ? curr : prev
+          );
+          if (closest && !isNaN(closest.amplitude)) {
+            peakAmp = closest.amplitude;
+          }
+        }
+        const peakY = ampToY(peakAmp);
 
-      // Badge pill background
-      ctx.fillStyle = isSelected ? '#851036' : (isHovered ? '#C92A54' : '#FFFFFF');
-      ctx.beginPath();
-      ctx.roundRect(peakX - badgeWidth / 2, badgeY - badgeHeight / 2, badgeWidth, badgeHeight, 8);
-      ctx.fill();
-      ctx.lineWidth = 1.5;
-      ctx.strokeStyle = isSelected ? '#851036' : '#C92A54';
-      ctx.stroke();
+        if (isNaN(peakX) || isNaN(peakY)) return;
 
-      // Badge label text
-      ctx.fillStyle = isSelected ? '#FFFFFF' : (isHovered ? '#FFFFFF' : '#851036');
+        const isSelected = idx === selectedPeakIndex;
+        const isHovered = idx === hoveredPeakIndex;
+
+        // Vertical guide line down from peak
+        ctx.save();
+        ctx.beginPath();
+        ctx.setLineDash([4, 4]);
+        ctx.lineWidth = isSelected ? 2 : 1;
+        ctx.strokeStyle = isSelected ? '#C92A54' : (isHovered ? '#851036' : 'rgba(133, 16, 54, 0.4)');
+        ctx.moveTo(peakX, peakY);
+        ctx.lineTo(peakX, height - 20);
+        ctx.stroke();
+        ctx.restore();
+
+        // Outer halo for selected peak
+        if (isSelected) {
+          ctx.beginPath();
+          ctx.arc(peakX, peakY, 14, 0, Math.PI * 2);
+          ctx.fillStyle = 'rgba(201, 42, 84, 0.25)';
+          ctx.fill();
+
+          ctx.beginPath();
+          ctx.arc(peakX, peakY, 9, 0, Math.PI * 2);
+          ctx.fillStyle = 'rgba(133, 16, 54, 0.4)';
+          ctx.fill();
+        }
+
+        // Pin circle on peak
+        ctx.beginPath();
+        ctx.arc(peakX, peakY, isSelected ? 6.5 : (isHovered ? 5.5 : 4.5), 0, Math.PI * 2);
+        ctx.fillStyle = isSelected ? '#C92A54' : '#851036';
+        ctx.fill();
+        ctx.lineWidth = 2;
+        ctx.strokeStyle = '#FFFFFF';
+        ctx.stroke();
+
+        // Text Badge above R-peak
+        const badgeY = Math.max(24, peakY - (isSelected ? 26 : 20));
+        const peakLabel = `R${peak.peak_num || (idx + 1)}`;
+        ctx.font = isSelected ? 'bold 13px Inter, sans-serif' : 'bold 11px Inter, sans-serif';
+        const textWidth = ctx.measureText(peakLabel).width;
+        const badgeWidth = textWidth + 14;
+        const badgeHeight = isSelected ? 20 : 17;
+
+        // Badge pill background
+        ctx.fillStyle = isSelected ? '#851036' : (isHovered ? '#C92A54' : '#FFFFFF');
+        drawRoundRect(ctx, peakX - badgeWidth / 2, badgeY - badgeHeight / 2, badgeWidth, badgeHeight, 8);
+        ctx.fill();
+        ctx.lineWidth = 1.5;
+        ctx.strokeStyle = isSelected ? '#851036' : '#C92A54';
+        ctx.stroke();
+
+        // Badge label text
+        ctx.fillStyle = isSelected ? '#FFFFFF' : (isHovered ? '#FFFFFF' : '#851036');
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(peakLabel, peakX, badgeY);
+
+        // Subtitle below badge: timestamp
+        ctx.font = '10px Inter, sans-serif';
+        ctx.fillStyle = isSelected ? '#851036' : '#555555';
+        const timeStr = `${peakT.toFixed(2)}s`;
+        ctx.fillText(timeStr, peakX, badgeY + badgeHeight / 2 + 10);
+
+        // Down arrow pointing from badge to pin
+        ctx.beginPath();
+        ctx.moveTo(peakX - 3, badgeY + badgeHeight / 2);
+        ctx.lineTo(peakX + 3, badgeY + badgeHeight / 2);
+        ctx.lineTo(peakX, badgeY + badgeHeight / 2 + 3);
+        ctx.closePath();
+        ctx.fillStyle = isSelected ? '#851036' : '#C92A54';
+        ctx.fill();
+      });
+
+      // 5. Time axis bottom labels
+      ctx.fillStyle = '#666666';
+      ctx.font = '10.5px Inter, sans-serif';
       ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      ctx.fillText(peakLabel, peakX, badgeY);
-
-      // Subtitle below badge: timestamp (e.g. 1.24s)
-      ctx.font = '10px Inter, sans-serif';
-      ctx.fillStyle = isSelected ? '#851036' : '#555555';
-      const timeStr = `${peak.timestamp.toFixed(2)}s`;
-      ctx.fillText(timeStr, peakX, badgeY + badgeHeight / 2 + 10);
-
-      // Down arrow pointing from badge to pin
-      ctx.beginPath();
-      ctx.moveTo(peakX - 3, badgeY + badgeHeight / 2);
-      ctx.lineTo(peakX + 3, badgeY + badgeHeight / 2);
-      ctx.lineTo(peakX, badgeY + badgeHeight / 2 + 3);
-      ctx.closePath();
-      ctx.fillStyle = isSelected ? '#851036' : '#C92A54';
-      ctx.fill();
-    });
-
-    // 5. Time axis bottom labels
-    ctx.fillStyle = '#666666';
-    ctx.font = '10.5px Inter, sans-serif';
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'bottom';
-    for (let t = firstMajor; t <= viewEnd; t += majorStep * 2) {
-      const x = timeToX(t);
-      if (x >= 20 && x <= width - 20) {
-        ctx.fillText(`${t.toFixed(1)}s`, x, height - 3);
+      ctx.textBaseline = 'bottom';
+      for (let t = firstMajor; t <= viewEnd; t += majorStep * 2) {
+        const x = timeToX(t);
+        if (x >= 20 && x <= width - 20) {
+          ctx.fillText(`${t.toFixed(1)}s`, x, height - 3);
+        }
       }
+    } catch (err) {
+      console.error('ECG canvas draw error:', err);
     }
   }, [
-    waveformSamples,
-    rPeaks,
+    normalizedSamples,
+    normalizedPeaks,
     selectedPeakIndex,
     hoveredPeakIndex,
     viewStart,
@@ -283,19 +353,18 @@ export default function ECGWaveformViewer({
     maxAmp
   ]);
 
-  // Handle canvas clicks to select closest R-peak
+  // Click detection
   const handleCanvasClick = (e) => {
     const canvas = canvasRef.current;
-    if (!canvas || !rPeaks || rPeaks.length === 0) return;
+    if (!canvas || !normalizedPeaks || normalizedPeaks.length === 0) return;
     const rect = canvas.getBoundingClientRect();
     const clickX = e.clientX - rect.left;
     const width = rect.width;
     const clickTime = viewStart + (clickX / width) * viewDuration;
 
-    // Find nearest peak within click tolerance (~0.25 seconds or 40 pixels)
     let closestIdx = 0;
     let minDiff = Infinity;
-    rPeaks.forEach((p, idx) => {
+    normalizedPeaks.forEach((p, idx) => {
       const diff = Math.abs(p.timestamp - clickTime);
       if (diff < minDiff) {
         minDiff = diff;
@@ -304,14 +373,14 @@ export default function ECGWaveformViewer({
     });
 
     if (onSelectPeak) {
-      onSelectPeak(rPeaks[closestIdx], closestIdx);
+      onSelectPeak(normalizedPeaks[closestIdx], closestIdx);
     }
   };
 
-  // Handle mouse move for hover detection
+  // Hover detection
   const handleMouseMove = (e) => {
     const canvas = canvasRef.current;
-    if (!canvas || !rPeaks || rPeaks.length === 0) return;
+    if (!canvas || !normalizedPeaks || normalizedPeaks.length === 0) return;
     const rect = canvas.getBoundingClientRect();
     const mouseX = e.clientX - rect.left;
     const width = rect.width;
@@ -319,7 +388,7 @@ export default function ECGWaveformViewer({
 
     let nearest = null;
     let minDiff = Infinity;
-    rPeaks.forEach((p, idx) => {
+    normalizedPeaks.forEach((p, idx) => {
       const diff = Math.abs(p.timestamp - mouseTime);
       if (diff < minDiff && diff < (0.2 * viewDuration) / 5) {
         minDiff = diff;
@@ -333,7 +402,6 @@ export default function ECGWaveformViewer({
     setHoveredPeakIndex(null);
   };
 
-  // Navigation handlers
   const handleZoomIn = () => {
     setViewDuration((prev) => Math.max(1.5, prev * 0.75));
   };
@@ -349,10 +417,10 @@ export default function ECGWaveformViewer({
 
   const handleSliderChange = (e) => {
     const val = parseFloat(e.target.value);
-    setViewStart(val);
+    if (!isNaN(val)) setViewStart(val);
   };
 
-  const selectedPeak = rPeaks[selectedPeakIndex];
+  const selectedPeak = normalizedPeaks[selectedPeakIndex] || normalizedPeaks[0];
 
   return (
     <div className="ecg-waveform-viewer-container" ref={containerRef}>
@@ -447,17 +515,17 @@ export default function ECGWaveformViewer({
           <div className="quick-divider">•</div>
           <div className="quick-bar-item">
             <span className="item-label">ECG Timing:</span>
-            <span className="item-val">{selectedPeak.timestamp?.toFixed(2)} sec</span>
+            <span className="item-val">{(selectedPeak.timestamp || 0).toFixed(2)} sec</span>
           </div>
           <div className="quick-divider">•</div>
           <div className="quick-bar-item">
             <span className="item-label">Video Frame:</span>
-            <span className="item-val">Frame #{selectedPeak.frame_number} (~{selectedPeak.frame_timestamp?.toFixed(2)}s)</span>
+            <span className="item-val">Frame #{selectedPeak.frame_number} (~{(selectedPeak.frame_timestamp || 0).toFixed(2)}s)</span>
           </div>
           <div className="quick-divider">•</div>
           <div className="quick-bar-item">
             <span className="item-label">Model Confidence:</span>
-            <span className="item-val">{(selectedPeak.confidence * 100).toFixed(1)}%</span>
+            <span className="item-val">{((selectedPeak.confidence || 0.999) * 100).toFixed(1)}%</span>
           </div>
         </div>
       )}
