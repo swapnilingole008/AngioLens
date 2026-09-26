@@ -1,6 +1,6 @@
 # CardioAI
 
-CardioAI is an AI-assisted cardiac analysis platform evolved from the initial AngioLens implementation. The project combines the existing clinical analysis workflow with a new ECG-Gated Imaging Trigger feature for ECG signal analysis.
+CardioAI is an AI-assisted cardiac analysis platform. This repository represents the first implementation of the project and combines the initial clinical analysis workflow with a new ECG-Gated Imaging Trigger feature for ECG signal analysis.
 
 ## Project Overview
 
@@ -244,7 +244,7 @@ CardioAI/
 └── README.md
 ```
 
-The exact structure should follow the existing CardioAI/AngioLens repository architecture rather than unnecessarily duplicating directories.
+The exact structure should follow the existing CardioAI repository architecture rather than unnecessarily duplicating directories.
 
 ---
 
@@ -296,7 +296,7 @@ Examples of existing API functionality include:
 /api/analyses/<analysis_id>/review
 ```
 
-The existing coronary/clinical analysis functionality should remain compatible with the ECG feature.
+The existing clinical analysis functionality should remain compatible with the ECG feature.
 
 ---
 
