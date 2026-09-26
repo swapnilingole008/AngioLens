@@ -96,17 +96,28 @@ def compute_dashboard_metrics(
     Returns a dict of equal-length 1D numpy arrays, each with
     duration_seconds * sample_rate_hz points:
 
-        time_s            seconds from the start of the window
-        heart_rate_bpm    instantaneous heart rate (NaN where unknown)
-        rr_interval_ms    RR interval backing that heart rate (NaN where unknown)
-        r_peak_detected   1 where an R-peak landed in that time bin, else 0
-        target_phase      cardiac cycle position in [0, 1) (NaN where unknown)
-        confidence        calibrated R-peak probability at that moment
-        trigger           1 where target_phase crosses target_phase_fraction
+        time_s               seconds from the start of the window
+        heart_rate_bpm        instantaneous heart rate (NaN where unknown)
+        rr_interval_ms         RR interval backing that heart rate (NaN where unknown)
+        r_peak_detected        1 where an R-peak landed in that time bin, else 0
+        target_phase           cardiac cycle position in [0, 1) (NaN where unknown)
+        confidence              calibrated R-peak probability at that moment
+        trigger                 1 where target_phase crosses target_phase_fraction
+        ideal_capture_moment    1 where this instant is the recommended moment
+                                 to take the photo (alias of `trigger`, kept as
+                                 its own field so downstream consumers don't
+                                 have to know what "trigger" means)
 
     predicted_peaks / centers are sample indices at fs Hz (as produced
     by test.py's detect_peaks / create_windows). probabilities must be
     the same calibrated array test.py reports confidence from.
+
+    `target_phase_fraction` (default 0.75) sets *where in the cardiac
+    cycle* counts as the ideal photo moment. 0.75 means 75% of the way
+    through the RR interval -- i.e. mid-to-late diastole, just before
+    the next heartbeat's contraction. This is the standard "quiet
+    phase" used for cardiac-gated imaging because the heart is moving
+    the least there, minimizing motion blur in the photo/frame.
     """
 
     centers = np.asarray(centers, dtype=np.int64)
@@ -144,6 +155,11 @@ def compute_dashboard_metrics(
             if target_phase[i - 1] < target_phase_fraction <= target_phase[i]:
                 trigger[i] = 1
 
+    # Explicit "take the photo now" signal. Same values as `trigger`,
+    # exposed under an unambiguous name for anything downstream that
+    # only cares about "when do I fire the camera/scanner".
+    ideal_capture_moment = trigger.copy()
+
     return {
         "time_s": time_axis,
         "heart_rate_bpm": heart_rate_bpm,
@@ -151,8 +167,25 @@ def compute_dashboard_metrics(
         "r_peak_detected": r_peak_detected,
         "target_phase": target_phase,
         "confidence": confidence,
-        "trigger": trigger
+        "trigger": trigger,
+        "ideal_capture_moment": ideal_capture_moment
     }
+
+
+def get_ideal_capture_times(metrics):
+    """
+    Pull out the actual timestamps (seconds, from the start of the
+    dashboard window) at which `compute_dashboard_metrics` says the
+    heart is in its ideal position/phase to take a photo.
+
+    This is the array the caller asked for: every entry is a moment
+    that is safe/ideal to trigger image capture, in seconds.
+    """
+
+    time_axis = np.asarray(metrics["time_s"], dtype=np.float64)
+    ideal_flags = np.asarray(metrics["ideal_capture_moment"], dtype=np.int8)
+
+    return time_axis[ideal_flags == 1]
 
 
 def metrics_to_json_serializable(metrics):
@@ -176,6 +209,11 @@ def metrics_to_json_serializable(metrics):
 
 def save_dashboard_json(metrics, path):
     payload = metrics_to_json_serializable(metrics)
+
+    payload["ideal_capture_times_s"] = [
+        round(float(t), 4)
+        for t in get_ideal_capture_times(metrics)
+    ]
 
     with open(path, "w") as f:
         json.dump(payload, f, indent=2)
@@ -860,6 +898,10 @@ def main():
         target_phase_fraction=args.target_phase
     )
 
+    ideal_capture_times = get_ideal_capture_times(
+        dashboard_metrics
+    )
+
     if len(peak_confidences) > 0:
 
         mean_confidence = float(
@@ -1148,6 +1190,25 @@ def main():
         f"Trigger pulses in window    : "
         f"{int(np.sum(dashboard_metrics['trigger']))}"
     )
+
+    print(
+        "\nIdeal photo-capture times (seconds, from window start):"
+    )
+
+    if len(ideal_capture_times) == 0:
+
+        print(
+            "None found in this window (not enough clean R-peaks "
+            "to establish cardiac phase)."
+        )
+
+    else:
+
+        print(
+            ", ".join(
+                f"{t:.2f}s" for t in ideal_capture_times
+            )
+        )
 
     print("\nDetected R-peak details:")
 
