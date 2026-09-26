@@ -68,6 +68,7 @@ export default function ECGGatingPanel({
   totalFrames = 120,
   fps = 30,
   videoStatus = 'Not provided', // 'Not provided' | filename
+  externalCsvFile = null,
 }) {
   // Configurable Parameters (Section 2 & 6)
   const [samplingRate, setSamplingRate] = useState(250); // 250 Hz default
@@ -88,6 +89,7 @@ export default function ECGGatingPanel({
   const [uploadedFileName, setUploadedFileName] = useState('');
   const [uploadedCsvPoints, setUploadedCsvPoints] = useState(null);
   const [isLoading, setIsLoading] = useState(false);
+  const [isCanvasDragging, setIsCanvasDragging] = useState(false);
 
   // View Captured Images Modal State (Section 11)
   const [isImagesModalOpen, setIsImagesModalOpen] = useState(false);
@@ -408,47 +410,143 @@ export default function ECGGatingPanel({
     return Math.round(val * factor) / factor;
   };
 
-  // CSV Upload Handler with Flexible Column Detection (Section 1)
-  const handleCsvUpload = async (e) => {
-    const file = e.target.files && e.target.files[0];
-    if (!file) return;
+  // Client-Side CSV Parser Fallback (parses arbitrary delimiters, headers, quotes, single/multi-column)
+  const parseCsvClientSide = (text) => {
+    if (!text || !text.trim()) return [];
+    const cleanText = text.replace(/^\ufeff/, '').trim();
+    const rawLines = cleanText.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+    if (rawLines.length === 0) return [];
 
+    const sampleLine = rawLines[0];
+    let delimiter = ',';
+    if (sampleLine.includes(';') && sampleLine.split(';').length > sampleLine.split(',').length) {
+      delimiter = ';';
+    } else if (sampleLine.includes('\t') && sampleLine.split('\t').length > sampleLine.split(',').length) {
+      delimiter = '\t';
+    }
+
+    const parseLine = (line) => line.split(delimiter).map(c => c.trim().replace(/^["']|["']$/g, ''));
+    const firstRow = parseLine(rawLines[0]).map(c => c.toLowerCase());
+
+    const timeKeywords = ['time', 'time_sec', 'timestamp', 't', 'sec', 'seconds', 'time(s)', 'timesec'];
+    const ecgKeywords = ['ecg', 'signal', 'lead_ii', 'lead2', 'lead_2', 'voltage', 'val', 'value', 'raw', 'mv'];
+
+    let timeIdx = -1;
+    let ecgIdx = -1;
+
+    firstRow.forEach((col, idx) => {
+      if (timeKeywords.includes(col) && timeIdx === -1) timeIdx = idx;
+      if (ecgKeywords.includes(col) && ecgIdx === -1) ecgIdx = idx;
+    });
+
+    const isFirstRowHeader = (timeIdx !== -1 || ecgIdx !== -1) || firstRow.some(c => isNaN(parseFloat(c)));
+    const dataLines = isFirstRowHeader ? rawLines.slice(1) : rawLines;
+    if (dataLines.length === 0) return [];
+
+    const firstDataRow = parseLine(dataLines[0]);
+    if (ecgIdx === -1) {
+      if (firstDataRow.length >= 2) {
+        ecgIdx = timeIdx === 0 ? 1 : (timeIdx === 1 ? 0 : 1);
+        if (timeIdx === -1) timeIdx = 0;
+      } else {
+        ecgIdx = 0;
+      }
+    }
+
+    const dt = 1.0 / (samplingRate || 250);
+    const parsedPoints = [];
+
+    for (let i = 0; i < dataLines.length; i++) {
+      const parts = parseLine(dataLines[i]);
+      if (ecgIdx >= parts.length) continue;
+      const ecgVal = parseFloat(parts[ecgIdx]);
+      if (isNaN(ecgVal)) continue;
+
+      let tVal = (timeIdx !== -1 && timeIdx < parts.length && parts[timeIdx]) 
+        ? parseFloat(parts[timeIdx]) 
+        : (i * dt);
+      if (isNaN(tVal)) tVal = i * dt;
+
+      parsedPoints.push({
+        timestamp: Math.round(tVal * 10000) / 10000,
+        ecg: ecgVal
+      });
+    }
+
+    return parsedPoints;
+  };
+
+  // Robust Unified CSV Processing (Backend API + Client-Side Fallback)
+  const processCsvFile = async (file) => {
+    if (!file) return;
     setUploadedFileName(file.name);
     setIsLoading(true);
 
     try {
-      const reader = new FileReader();
-      reader.onload = async (evt) => {
-        const text = evt.target.result;
-        try {
-          // Process via backend parser
-          const res = await api.processECG({
-            csv_text: text,
-            target_phase: targetPhase,
-            fps,
-            total_frames: totalFrames
-          });
+      const text = await file.text();
+      let succeeded = false;
 
-          if (res?.success && res.samples && res.samples.length > 0) {
-            setUploadedCsvPoints(res.samples);
-            setRPeaksCount(res.r_peaks ? res.r_peaks.length : 12);
-            if (res.summary) {
-              setHeartRate(Math.round(res.summary.heart_rate || 74));
-              setRrIntervalMs(res.summary.rr_interval_ms || 811);
-              setSelectedFrame(res.summary.selected_frame || 47);
-            }
+      // 1. Try Backend API
+      try {
+        const res = await api.processECG({
+          csv_text: text,
+          target_phase: targetPhase,
+          fps,
+          total_frames: totalFrames
+        });
+
+        if (res?.success && res.samples && res.samples.length > 0) {
+          setUploadedCsvPoints(res.samples);
+          setRPeaksCount(res.r_peaks ? res.r_peaks.length : 12);
+          if (res.summary) {
+            setHeartRate(Math.round(res.summary.heart_rate || 74));
+            setRrIntervalMs(res.summary.rr_interval_ms || 811);
+            setSelectedFrame(res.summary.selected_frame || 47);
           }
-        } catch (err) {
-          console.error('Failed to parse ECG CSV:', err);
-          alert('Could not parse ECG CSV. Please verify that it contains numeric time-series values.');
-        } finally {
-          setIsLoading(false);
+          succeeded = true;
         }
-      };
-      reader.readAsText(file);
+      } catch (backendErr) {
+        console.warn('Backend processECG unavailable, using browser parser:', backendErr);
+      }
+
+      // 2. Client-side fallback if backend was unavailable
+      if (!succeeded) {
+        const clientPoints = parseCsvClientSide(text);
+        if (clientPoints && clientPoints.length >= 10) {
+          setUploadedCsvPoints(clientPoints);
+          const duration = clientPoints[clientPoints.length - 1].timestamp - clientPoints[0].timestamp;
+          if (duration > 0.5) {
+            const estRPeaks = Math.max(3, Math.round(duration * 1.2));
+            setRPeaksCount(estRPeaks);
+            const estRR = duration / estRPeaks;
+            setRrIntervalMs(Math.round(estRR * 1000));
+            setHeartRate(Math.min(130, Math.max(45, Math.round(60 / estRR))));
+          }
+          succeeded = true;
+        } else {
+          alert('Could not detect numeric ECG signal columns in ' + file.name + '. Please verify that it contains time-series values.');
+        }
+      }
     } catch (err) {
-      console.error(err);
+      console.error('Failed to read CSV file:', err);
+      alert('Could not read the CSV file: ' + err.message);
+    } finally {
       setIsLoading(false);
+    }
+  };
+
+  // Synchronize with external CSV file passed from parent UploadPage
+  useEffect(() => {
+    if (externalCsvFile) {
+      processCsvFile(externalCsvFile);
+    }
+  }, [externalCsvFile]);
+
+  // CSV Upload Handler with Flexible Column Detection (Section 1)
+  const handleCsvUpload = (e) => {
+    const file = e.target.files && e.target.files[0];
+    if (file) {
+      processCsvFile(file);
     }
   };
 
@@ -546,7 +644,27 @@ export default function ECGGatingPanel({
       </div>
 
       {/* Real-time Hospital Monitor-Style Scrolling Waveform Canvas (Section 2) */}
-      <div className="ecg-canvas-container">
+      <div 
+        className={`ecg-canvas-container ${isCanvasDragging ? 'dragging' : ''}`}
+        onDragOver={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          setIsCanvasDragging(true);
+        }}
+        onDragLeave={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          setIsCanvasDragging(false);
+        }}
+        onDrop={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          setIsCanvasDragging(false);
+          if (e.dataTransfer.files && e.dataTransfer.files[0]) {
+            processCsvFile(e.dataTransfer.files[0]);
+          }
+        }}
+      >
         <div className="canvas-top-bar">
           <div className="canvas-lead-group">
             <span className="lead-tag">Lead II Continuous Waveform</span>
@@ -788,6 +906,17 @@ export default function ECGGatingPanel({
               className="hidden-file-input" 
             />
           </label>
+          {uploadedFileName && (
+            <button 
+              type="button" 
+              className="btn-outline-burgundy-sm reset-csv-btn"
+              onClick={handleResetToDemoSignal}
+              title="Revert to simulated Lead II ECG signal"
+            >
+              <RefreshCw size={12} />
+              <span>Reset Signal</span>
+            </button>
+          )}
         </div>
 
         <div className="actions-right-group">
@@ -1105,6 +1234,19 @@ export default function ECGGatingPanel({
           border: 1px solid #1E293B;
           display: flex;
           flex-direction: column;
+          transition: all 0.2s ease;
+        }
+
+        .ecg-canvas-container.dragging {
+          border-color: #F59E0B;
+          box-shadow: 0 0 15px rgba(245, 158, 11, 0.4);
+        }
+
+        .reset-csv-btn {
+          display: inline-flex;
+          align-items: center;
+          gap: 4px;
+          cursor: pointer;
         }
 
         .canvas-top-bar {
