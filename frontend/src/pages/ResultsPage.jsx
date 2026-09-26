@@ -4,6 +4,7 @@ import {
   Download, 
   CheckCircle, 
   AlertTriangle, 
+  AlertCircle,
   Activity, 
   Layers, 
   FileText,
@@ -188,14 +189,14 @@ function ResultsPageContent({ currentPath, onNavigate }) {
   // Safe extraction and normalization of R-peaks
   const rPeaks = useMemo(() => {
     const raw = analysisData?.r_peaks;
-    if (Array.isArray(raw) && raw.length > 0) {
+    if (Array.isArray(raw)) {
       return raw.map((p, idx) => {
         const peakNum = Number(p.peak_num || p.r_peak_number || (idx + 1));
         const t = Number(p.timestamp ?? p.r_peak_timestamp ?? p.trigger_timestamp ?? 0);
-        const frameNum = Number(p.frame_number ?? p.selected_frame ?? Math.max(1, Math.round(t * 30) + 1));
-        const frameT = Number(p.frame_timestamp ?? (frameNum > 0 ? (frameNum - 1) / 30 : t));
+        const frameNum = (p.frame_number !== null && p.frame_number !== undefined) ? Number(p.frame_number) : null;
+        const frameT = (p.frame_timestamp !== null && p.frame_timestamp !== undefined) ? Number(p.frame_timestamp) : null;
         const conf = Number(p.confidence ?? p.confidence_decimal ?? 0.999);
-        const imgUrl = p.image_url || p.image_path || `/api/ecg/captured-images/peak_${peakNum}_frame_${frameNum}.jpg`;
+        const imgUrl = p.image_url || null;
 
         return {
           ...p,
@@ -204,10 +205,11 @@ function ResultsPageContent({ currentPath, onNavigate }) {
           timestamp: isNaN(t) ? 0 : t,
           sample_index: Number(p.sample_index ?? p.index ?? Math.round(t * (analysisData?.sampling_rate || 360))),
           frame_number: frameNum,
-          frame_timestamp: isNaN(frameT) ? t : frameT,
+          frame_timestamp: frameT,
           confidence: isNaN(conf) ? 0.999 : conf,
           image_url: imgUrl,
-          status: p.status || 'Captured',
+          status: p.status || (imgUrl ? 'Captured' : (p.error || 'No frame')),
+          error: p.error || null,
         };
       });
     }
@@ -234,7 +236,7 @@ function ResultsPageContent({ currentPath, onNavigate }) {
 
   // Guaranteed active R-peak object with complete fallbacks
   const activePeak = useMemo(() => {
-    return rPeaks[selectedPeakIndex] || rPeaks[0] || DEFAULT_R_PEAKS[0];
+    return rPeaks[selectedPeakIndex] || rPeaks[0] || null;
   }, [rPeaks, selectedPeakIndex]);
 
   // Stepper navigation
@@ -414,38 +416,50 @@ function ResultsPageContent({ currentPath, onNavigate }) {
             <div className="viewport-header">
               <div className="viewport-title">
                 <Film size={16} />
-                <span>Captured Cine Frame #{activePeak.frame_number || 7}</span>
+                <span>{activePeak?.frame_number ? `Captured Cine Frame #${activePeak.frame_number}` : 'ECG Gated Frame'}</span>
               </div>
               <span className="viewport-timing-stamp">
-                t = {safeFixed(activePeak.frame_timestamp)}s
+                {activePeak?.frame_timestamp !== null && activePeak?.frame_timestamp !== undefined ? `t = ${safeFixed(activePeak.frame_timestamp)}s` : (activePeak?.status || '')}
               </span>
             </div>
 
             <div className="frame-image-wrapper">
-              {activePeak.image_url ? (
+              {activePeak?.image_url ? (
                 <img
                   src={activePeak.image_url}
                   alt={`Angiography frame at R-peak #${activePeak.peak_num}`}
                   className="captured-frame-img"
                   onError={(e) => {
-                    // Fallback to sample image if file path is missing on disk
-                    e.currentTarget.onerror = null;
-                    e.currentTarget.src = '/src/assets/images/angiogram-sample.jpg';
+                    e.currentTarget.style.display = 'none';
+                    if (e.currentTarget.nextElementSibling) {
+                      e.currentTarget.nextElementSibling.style.display = 'flex';
+                    }
                   }}
                 />
-              ) : (
-                <div className="no-frame-placeholder">
-                  <Camera size={32} />
-                  <span>Frame image processing</span>
+              ) : null}
+
+              {(!activePeak?.image_url || activePeak?.error) && (
+                <div className="no-frame-placeholder" style={{ padding: '36px 16px', textAlign: 'center', color: '#666', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>
+                  <AlertCircle size={36} color="#DC2626" style={{ marginBottom: '8px' }} />
+                  <span style={{ fontWeight: 600, color: '#333', display: 'block', fontSize: '15px', marginBottom: '4px' }}>
+                    {activePeak?.error || (activePeak?.status === 'Out of Range' ? 'No corresponding video frame available' : 'No frame available')}
+                  </span>
+                  <span style={{ fontSize: '13px', color: '#777' }}>
+                    {activePeak?.status === 'Out of Range'
+                      ? `R-peak timestamp (${safeFixed(activePeak?.timestamp)}s) is outside video duration.`
+                      : (activePeak?.status === 'Video Unavailable' ? 'No video stream was provided for frame extraction.' : 'Frame extraction could not be completed for this timestamp.')}
+                  </span>
                 </div>
               )}
 
               {/* Overlaid Medical Tag */}
-              <div className="frame-overlay-tag">
-                <span>R-Peak #{activePeak.peak_num || (selectedPeakIndex + 1)} • {safeFixed(activePeak.timestamp)}s</span>
-                <span className="dot">•</span>
-                <span>Frame #{activePeak.frame_number || 7}</span>
-              </div>
+              {activePeak?.frame_number && (
+                <div className="frame-overlay-tag">
+                  <span>R-Peak #{activePeak.peak_num || (selectedPeakIndex + 1)} • {safeFixed(activePeak.timestamp)}s</span>
+                  <span className="dot">•</span>
+                  <span>Frame #{activePeak.frame_number} (~{safeFixed(activePeak.frame_timestamp)}s)</span>
+                </div>
+              )}
             </div>
           </div>
         </div>
@@ -503,11 +517,11 @@ function ResultsPageContent({ currentPath, onNavigate }) {
                       </td>
                       <td>
                         <span className="frame-num-badge">
-                          Frame #{peak.frame_number || 1}
+                          {peak.frame_number ? `Frame #${peak.frame_number}` : 'N/A'}
                         </span>
                       </td>
                       <td>
-                        ~{safeFixed(peak.frame_timestamp)} s
+                        {peak.frame_timestamp !== null && peak.frame_timestamp !== undefined ? `~${safeFixed(peak.frame_timestamp)} s` : 'N/A'}
                       </td>
                       <td>
                         <span className="confidence-pill">
@@ -515,10 +529,17 @@ function ResultsPageContent({ currentPath, onNavigate }) {
                         </span>
                       </td>
                       <td>
-                        <span className="status-captured-badge">
-                          <CheckCircle2 size={13} />
-                          <span>Captured</span>
-                        </span>
+                        {peak.status === 'Captured' ? (
+                          <span className="status-captured-badge">
+                            <CheckCircle2 size={13} />
+                            <span>Captured</span>
+                          </span>
+                        ) : (
+                          <span className="status-warning-badge" style={{ color: '#DC2626', fontSize: '12px', fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+                            <AlertCircle size={13} />
+                            <span>{peak.status || 'No frame'}</span>
+                          </span>
+                        )}
                       </td>
                       <td>
                         <button 
@@ -555,50 +576,64 @@ function ResultsPageContent({ currentPath, onNavigate }) {
           </div>
         </div>
 
-        <div className="captured-frames-gallery-grid">
-          {rPeaks.map((peak, idx) => {
-            const isSelected = idx === selectedPeakIndex;
-            return (
-              <div 
-                key={peak.peak_num || idx}
-                className={`gallery-frame-card ${isSelected ? 'active-card' : ''}`}
-                onClick={() => setSelectedPeakIndex(idx)}
-              >
-                <div className="gallery-thumbnail-wrap">
-                  {peak.image_url ? (
-                    <img 
-                      src={peak.image_url} 
-                      alt={`R-Peak ${peak.peak_num} frame`} 
-                      className="gallery-thumbnail-img"
-                      onError={(e) => {
-                        e.currentTarget.onerror = null;
-                        e.currentTarget.src = '/src/assets/images/angiogram-sample.jpg';
-                      }}
-                    />
-                  ) : (
-                    <div className="gallery-placeholder">
-                      <Camera size={24} />
+        {rPeaks.length === 0 ? (
+          <div className="no-peaks-banner" style={{ padding: '36px 20px', textAlign: 'center', background: '#FEF2F2', borderRadius: '10px', border: '1px solid #FECACA', margin: '20px 0' }}>
+            <AlertCircle size={36} color="#DC2626" style={{ marginBottom: '10px' }} />
+            <h3 style={{ color: '#991B1B', margin: '0 0 6px 0', fontSize: '18px' }}>No R-peaks detected</h3>
+            <p style={{ color: '#7F1D1D', margin: 0, fontSize: '14px' }}>
+              No R-peaks detected. No ECG-triggered frames available.
+            </p>
+          </div>
+        ) : (
+          <div className="captured-frames-gallery-grid">
+            {rPeaks.map((peak, idx) => {
+              const isSelected = idx === selectedPeakIndex;
+              return (
+                <div 
+                  key={peak.peak_num || idx}
+                  className={`gallery-frame-card ${isSelected ? 'active-card' : ''}`}
+                  onClick={() => setSelectedPeakIndex(idx)}
+                >
+                  <div className="gallery-thumbnail-wrap">
+                    {peak.image_url ? (
+                      <img 
+                        src={peak.image_url} 
+                        alt={`R-Peak ${peak.peak_num} frame`} 
+                        className="gallery-thumbnail-img"
+                        onError={(e) => {
+                          e.currentTarget.style.display = 'none';
+                        }}
+                      />
+                    ) : (
+                      <div className="gallery-placeholder" style={{ padding: '16px 8px', textAlign: 'center', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>
+                        <AlertCircle size={24} color="#D97706" />
+                        <span style={{ fontSize: '11px', color: '#666', marginTop: '6px', display: 'block', lineHeight: '1.2' }}>
+                          {peak.status === 'Out of Range' ? 'Outside video' : (peak.status || 'No frame')}
+                        </span>
+                      </div>
+                    )}
+
+                    <div className="gallery-card-badge">
+                      R-Peak #{peak.peak_num || (idx + 1)}
                     </div>
-                  )}
+                  </div>
 
-                  <div className="gallery-card-badge">
-                    R-Peak #{peak.peak_num || (idx + 1)}
+                  <div className="gallery-card-footer">
+                    <div className="footer-meta">
+                      <span className="time-text">t = {safeFixed(peak.timestamp)}s</span>
+                      <span className="frame-text">
+                        {peak.frame_number ? `Frame #${peak.frame_number}` : 'No frame'}
+                      </span>
+                    </div>
+                    <span className={`select-indicator ${isSelected ? 'selected' : ''}`}>
+                      {isSelected ? 'Active' : 'Select'}
+                    </span>
                   </div>
                 </div>
-
-                <div className="gallery-card-footer">
-                  <div className="footer-meta">
-                    <span className="time-text">t = {safeFixed(peak.timestamp)}s</span>
-                    <span className="frame-text">Frame #{peak.frame_number}</span>
-                  </div>
-                  <span className={`select-indicator ${isSelected ? 'selected' : ''}`}>
-                    {isSelected ? 'Active' : 'Select'}
-                  </span>
-                </div>
-              </div>
-            );
-          })}
-        </div>
+              );
+            })}
+          </div>
+        )}
       </div>
 
       {/* SECTION 5: Preserved AngioLens Quantitative Coronary Analysis (QCA) */}

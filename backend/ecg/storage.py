@@ -1,6 +1,6 @@
 """
 Captured Frame Storage Module
-Handles saving ECG-gated captured angiography frames to disk
+Handles saving ECG-gated captured angiography frames from actual video to disk
 and associating them with sessions, triggers, and patients.
 """
 
@@ -18,78 +18,70 @@ def ensure_storage_dir():
 
 
 def save_captured_frame(
-    session_id,
+    session_id=None,
     trigger_index=1,
-    frame_number=47,
-    trigger_timestamp=2.34,
+    frame_number=1,
+    trigger_timestamp=0.0,
     video_path=None,
     total_frames=120,
     fps=30.0
 ):
     """
-    Saves an angiography frame corresponding to a virtual trigger to disk.
-    If video_path exists and is a valid video file, extracts the exact frame via OpenCV.
-    Otherwise, extracts/copies from the baseline angiogram with frame annotation.
-
-    Returns:
-    {
-        "image_id": "IMG-TRIG-001-...",
-        "filename": "trigger_001.png",
-        "file_path": "/path/to/trigger_001.png",
-        "image_url": "/api/ecg/captured-images/trigger_001.png",
-        "frame_number": frame_number,
-        "trigger_timestamp": trigger_timestamp
-    }
+    Extracts the exact frame from the uploaded video via OpenCV at frame_number
+    and saves it to disk as rpeak_{trigger_index:03d}_frame_{frame_number:03d}.jpg.
+    DO NOT use dummy or static sample images.
     """
     ensure_storage_dir()
-    clean_ses = session_id.replace('-', '_') if session_id else uuid.uuid4().hex[:8]
-    image_filename = f"peak_{trigger_index:03d}_{clean_ses}_frame_{frame_number}.jpg"
+    image_filename = f"rpeak_{trigger_index:03d}_frame_{frame_number:03d}.jpg"
     target_path = STORAGE_DIR / image_filename
 
     extracted = False
+    error_msg = None
 
-    # 1. Attempt frame extraction from actual video file if provided
+    # Frame extraction from the actual video file via OpenCV
     if video_path and os.path.exists(video_path):
         try:
             import cv2
             cap = cv2.VideoCapture(str(video_path))
             if cap.isOpened():
-                # Seek to target frame
-                cap.set(cv2.CAP_PROP_POS_FRAMES, max(0, frame_number - 1))
+                # 0-indexed frame index in OpenCV
+                frame_idx = max(0, int(frame_number) - 1)
+                cap.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
                 ret, frame = cap.read()
                 if ret and frame is not None:
-                    cv2.imwrite(str(target_path), frame)
+                    cv2.imwrite(str(target_path), frame, [cv2.IMWRITE_JPEG_QUALITY, 95])
                     extracted = True
+                else:
+                    error_msg = f"OpenCV read returned empty for frame #{frame_number}"
                 cap.release()
+            else:
+                error_msg = f"Could not open video file at {video_path}"
         except Exception as e:
-            print(f"Warning: Failed to extract frame from video: {e}")
+            error_msg = f"Failed to extract frame #{frame_number} from video: {e}"
+            print(f"Warning: {error_msg}")
+    else:
+        error_msg = "Video file unavailable for frame capture"
 
-    # 2. Fallback: Save frame from baseline angiogram sample
-    if not extracted:
-        try:
-            import cv2
-            if SAMPLE_IMAGE_PATH.exists():
-                img = cv2.imread(str(SAMPLE_IMAGE_PATH))
-                if img is not None:
-                    # Optional subtle cardiac pulsation overlay simulation for non-gated contrast
-                    cv2.imwrite(str(target_path), img)
-                    extracted = True
-        except Exception as e:
-            print(f"Warning: OpenCV fallback write error: {e}")
-
-    # 3. Direct copy if OpenCV is not available
-    if not extracted and SAMPLE_IMAGE_PATH.exists():
-        import shutil
-        shutil.copyfile(str(SAMPLE_IMAGE_PATH), str(target_path))
-        extracted = True
-
-    image_id = f"IMG-TRIG-{trigger_index:03d}-{uuid.uuid4().hex[:6]}"
-
-    return {
-        "image_id": image_id,
-        "filename": image_filename,
-        "file_path": str(target_path),
-        "image_url": f"/api/ecg/captured-images/{image_filename}",
-        "frame_number": frame_number,
-        "trigger_timestamp": round(float(trigger_timestamp), 4)
-    }
+    if extracted:
+        image_id = f"IMG-TRIG-{trigger_index:03d}-{uuid.uuid4().hex[:6]}"
+        return {
+            "image_id": image_id,
+            "filename": image_filename,
+            "file_path": str(target_path),
+            "image_url": f"/api/ecg/captured-images/{image_filename}",
+            "frame_number": frame_number,
+            "trigger_timestamp": round(float(trigger_timestamp), 4),
+            "extracted": True,
+            "error": None
+        }
+    else:
+        return {
+            "image_id": None,
+            "filename": None,
+            "file_path": None,
+            "image_url": None,
+            "frame_number": frame_number,
+            "trigger_timestamp": round(float(trigger_timestamp), 4),
+            "extracted": False,
+            "error": error_msg or f"Frame extraction failure for Frame #{frame_number}"
+        }
