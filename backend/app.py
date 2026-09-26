@@ -16,6 +16,7 @@ import numpy as np
 
 # Optional ML/Vision libraries
 try:
+    # pyrefly: ignore [missing-import]
     import cv2
 except ImportError:
     cv2 = None
@@ -25,17 +26,22 @@ try:
 except ImportError:
     tf = None
 
+# Ensure backend and models directories are in sys.path
+BACKEND_DIR = Path(__file__).resolve().parent
+if str(BACKEND_DIR) not in sys.path:
+    sys.path.insert(0, str(BACKEND_DIR))
+
+MODELS_DIR = Path(__file__).resolve().parent.parent / "models"
+if str(MODELS_DIR) not in sys.path:
+    sys.path.insert(0, str(MODELS_DIR))
+
 from dotenv import load_dotenv
 from flask import Flask, jsonify, request, send_from_directory
 from werkzeug.security import generate_password_hash, check_password_hash
 from ecg.storage import save_captured_frame, STORAGE_DIR, SAMPLE_IMAGE_PATH
 
-# Ensure models directory is in sys.path
-MODELS_DIR = Path(__file__).resolve().parent.parent / "models"
-if str(MODELS_DIR) not in sys.path:
-    sys.path.insert(0, str(MODELS_DIR))
-
 try:
+    # pyrefly: ignore [missing-import]
     from cardioai_test_all_in_one import (
         FS,
         DEFAULT_THRESHOLD,
@@ -57,6 +63,7 @@ try:
     )
 except Exception:
     try:
+        # pyrefly: ignore [missing-import]
         from single_test import (
             FS,
             DEFAULT_THRESHOLD,
