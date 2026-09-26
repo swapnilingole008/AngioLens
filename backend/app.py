@@ -10,7 +10,7 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from pathlib import Path
 from dotenv import load_dotenv
-from flask import Flask, jsonify, request
+from flask import Flask, jsonify, request, send_from_directory
 from werkzeug.security import generate_password_hash, check_password_hash
 from sqlalchemy import (
     create_engine,
@@ -36,6 +36,10 @@ try:
         generate_virtual_triggers,
         synchronize_frame_with_trigger,
         get_default_sample_ecg,
+        get_ecg_source,
+        DummyECGSource,
+        ModelECGSource,
+        save_captured_frame,
     )
 except ImportError:
     from .ecg import (
@@ -46,6 +50,10 @@ except ImportError:
         generate_virtual_triggers,
         synchronize_frame_with_trigger,
         get_default_sample_ecg,
+        get_ecg_source,
+        DummyECGSource,
+        ModelECGSource,
+        save_captured_frame,
     )
 
 # 1. Load environment variables from root .env
@@ -304,6 +312,92 @@ class DoctorReview(Base):
             "verified": self.verified,
             "comments": self.comments,
             "reviewed_at": self.reviewed_at.isoformat() if self.reviewed_at else None,
+        }
+
+# ----------------- ECG-Gated Imaging Models -----------------
+
+class ECGSession(Base):
+    __tablename__ = 'ecg_sessions'
+
+    id = Column(Integer, primary_key=True)
+    session_id = Column(String, unique=True, nullable=False)
+    patient_id = Column(String, nullable=True)
+    ecg_file = Column(Text, nullable=True)
+    video_file = Column(Text, nullable=True)
+    sampling_rate = Column(Integer, default=250)
+    heart_rate = Column(Numeric, nullable=True)
+    target_phase = Column(Numeric, default=70.0)
+    mode = Column(String, default='ecg_only')  # 'ecg_only' | 'ecg_video'
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "session_id": self.session_id,
+            "patient_id": self.patient_id,
+            "ecg_file": self.ecg_file,
+            "video_file": self.video_file,
+            "sampling_rate": self.sampling_rate,
+            "heart_rate": float(self.heart_rate) if self.heart_rate is not None else None,
+            "target_phase": float(self.target_phase) if self.target_phase is not None else 70.0,
+            "mode": self.mode,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+        }
+
+class ECGRPeak(Base):
+    __tablename__ = 'ecg_r_peaks'
+
+    id = Column(Integer, primary_key=True)
+    session_id = Column(String, ForeignKey('ecg_sessions.session_id'), nullable=False)
+    r_peak_timestamp = Column(Numeric, nullable=False)
+    rr_interval = Column(Numeric, nullable=True)
+    heart_rate = Column(Numeric, nullable=True)
+    target_phase = Column(Numeric, default=70.0)
+    trigger_timestamp = Column(Numeric, nullable=True)
+    confidence = Column(Numeric, nullable=True)
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "session_id": self.session_id,
+            "r_peak_timestamp": float(self.r_peak_timestamp) if self.r_peak_timestamp is not None else None,
+            "rr_interval": float(self.rr_interval) if self.rr_interval is not None else None,
+            "heart_rate": float(self.heart_rate) if self.heart_rate is not None else None,
+            "target_phase": float(self.target_phase) if self.target_phase is not None else 70.0,
+            "trigger_timestamp": float(self.trigger_timestamp) if self.trigger_timestamp is not None else None,
+            "confidence": float(self.confidence) if self.confidence is not None else None,
+        }
+
+class ECGCapturedImage(Base):
+    __tablename__ = 'ecg_captured_images'
+
+    id = Column(Integer, primary_key=True)
+    image_id = Column(String, unique=True, nullable=False)
+    session_id = Column(String, ForeignKey('ecg_sessions.session_id'), nullable=False)
+    patient_id = Column(String, nullable=True)
+    r_peak_id = Column(Integer, nullable=True)
+    trigger_timestamp = Column(Numeric, nullable=False)
+    frame_number = Column(Integer, nullable=False)
+    frame_timestamp = Column(Numeric, nullable=True)
+    target_phase = Column(Numeric, default=70.0)
+    image_path = Column(Text, nullable=False)
+    image_url = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "image_id": self.image_id,
+            "session_id": self.session_id,
+            "patient_id": self.patient_id,
+            "r_peak_id": self.r_peak_id,
+            "trigger_timestamp": float(self.trigger_timestamp) if self.trigger_timestamp is not None else None,
+            "frame_number": self.frame_number,
+            "frame_timestamp": float(self.frame_timestamp) if self.frame_timestamp is not None else None,
+            "target_phase": float(self.target_phase) if self.target_phase is not None else 70.0,
+            "image_path": self.image_path,
+            "image_url": self.image_url,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
         }
 
 # 4. Initialize Flask Application
@@ -1471,6 +1565,219 @@ def gate_frame():
             "message": "Failed to gate frame",
             "error": str(e)
         }), 500
+
+@app.route('/api/ecg/session', methods=['POST'])
+def create_ecg_session():
+    """
+    Creates an ECG-gating session (ECG-only or ECG + Video mode),
+    processes signal via DummyECGSource / parsed CSV, detects R-peaks,
+    computes virtual triggers, captures motion-gated angiography frames,
+    and stores session metadata in the database.
+    """
+    try:
+        data = request.get_json() or {}
+        patient_id = data.get('patient_id', 'PAT-00123')
+        target_phase = float(data.get('target_phase', 70.0))
+        sampling_rate = int(data.get('sampling_rate', 250))
+        heart_rate = float(data.get('heart_rate', 74.0))
+        noise_level = float(data.get('noise_level', 0.02))
+        fps = float(data.get('fps', 30.0))
+        total_frames = int(data.get('total_frames', 120))
+        video_file = data.get('video_file')
+        ecg_file = data.get('ecg_file', 'sample_ecg.csv')
+        csv_text = data.get('csv_text')
+        mode = "ecg_video" if video_file else "ecg_only"
+
+        # Obtain signal via source abstraction (Dummy source or parsed CSV)
+        if csv_text:
+            parsed = parse_ecg_csv(csv_text)
+            source_info = {
+                "source": "Uploaded ECG CSV",
+                "is_ai_model": False,
+                "status": "Custom Signal Loaded",
+                "disclaimer": "Demo / Simulation R-peak heuristic detector."
+            }
+        else:
+            source = get_ecg_source("dummy", sampling_rate=sampling_rate, heart_rate=heart_rate, noise_level=noise_level)
+            parsed = source.get_signal_samples(duration_sec=10.0)
+            source_info = source.get_source_label()
+
+        preprocessed = preprocess_ecg_signal(parsed, sample_rate=sampling_rate)
+        r_peaks = detect_r_peaks(preprocessed, sample_rate=sampling_rate)
+        cycles = calculate_rr_intervals(r_peaks)
+        triggers = generate_virtual_triggers(r_peaks, target_phase=target_phase)
+
+        session_uuid = f"SES-{datetime.utcnow().strftime('%Y%m%d')}-{random.randint(1000, 9999)}"
+
+        avg_hr = round(sum(c['heart_rate'] for c in cycles) / len(cycles), 1) if cycles else heart_rate
+        avg_rr = round(sum(c['rr_interval'] for c in cycles) / len(cycles), 3) if cycles else 0.810
+
+        # Create ECGSession in database
+        session_record = ECGSession(
+            session_id=session_uuid,
+            patient_id=patient_id,
+            ecg_file=ecg_file,
+            video_file=video_file,
+            sampling_rate=sampling_rate,
+            heart_rate=avg_hr,
+            target_phase=target_phase,
+            mode=mode,
+            created_at=datetime.utcnow()
+        )
+        db_session.add(session_record)
+        db_session.commit()
+
+        # Save R-peaks and triggers in DB
+        db_r_peaks = []
+        for idx, trig in enumerate(triggers):
+            rp = ECGRPeak(
+                session_id=session_uuid,
+                r_peak_timestamp=trig.get('r_peak_time', 0.0),
+                rr_interval=trig.get('rr_interval', avg_rr),
+                heart_rate=trig.get('heart_rate', avg_hr),
+                target_phase=target_phase,
+                trigger_timestamp=trig.get('trigger_time', 0.0),
+                confidence=trig.get('confidence', 0.98)
+            )
+            db_session.add(rp)
+            db_r_peaks.append(rp)
+        db_session.commit()
+
+        # Capture and save motion-gated images on disk and DB
+        captured_images_list = []
+        for idx, trig in enumerate(triggers[:6], start=1):
+            gated = synchronize_frame_with_trigger(trig, total_frames=total_frames, fps=fps)
+            frame_num = gated['selected_frame']
+            trig_t = trig['trigger_time']
+
+            saved = save_captured_frame(
+                session_id=session_uuid,
+                trigger_index=idx,
+                frame_number=frame_num,
+                trigger_timestamp=trig_t,
+                video_path=video_file if video_file and os.path.exists(video_file) else None,
+                total_frames=total_frames,
+                fps=fps
+            )
+
+            rp_id = db_r_peaks[idx - 1].id if idx - 1 < len(db_r_peaks) else None
+            img_rec = ECGCapturedImage(
+                image_id=saved['image_id'],
+                session_id=session_uuid,
+                patient_id=patient_id,
+                r_peak_id=rp_id,
+                trigger_timestamp=trig_t,
+                frame_number=frame_num,
+                frame_timestamp=round(frame_num / fps, 3),
+                target_phase=target_phase,
+                image_path=saved['file_path'],
+                image_url=saved['image_url'],
+                created_at=datetime.utcnow()
+            )
+            db_session.add(img_rec)
+            captured_images_list.append(img_rec.to_dict())
+
+        db_session.commit()
+
+        summary = {
+            "session_id": session_uuid,
+            "patient_id": patient_id,
+            "mode": mode,
+            "video_status": video_file if video_file else "Not provided",
+            "status": "Active",
+            "source_info": source_info,
+            "heart_rate": avg_hr,
+            "rr_interval": avg_rr,
+            "rr_interval_ms": int(round(avg_rr * 1000.0)),
+            "r_peaks_detected": len(r_peaks),
+            "target_phase": target_phase,
+            "trigger_status": "GENERATED" if triggers else "WAITING",
+            "selected_frame": captured_images_list[0]['frame_number'] if captured_images_list else 47,
+            "confidence": 98,
+            "confidence_label": "Simulated / Demo Confidence",
+            "captured_images_count": len(captured_images_list)
+        }
+
+        return jsonify({
+            "success": True,
+            "session": session_record.to_dict(),
+            "summary": summary,
+            "r_peaks": r_peaks,
+            "cycles": cycles,
+            "triggers": triggers,
+            "captured_images": captured_images_list,
+            "samples": parsed[:1000]
+        }), 201
+
+    except Exception as e:
+        db_session.rollback()
+        return jsonify({
+            "success": False,
+            "message": "Failed to create ECG session",
+            "error": str(e)
+        }), 500
+
+
+@app.route('/api/ecg/sessions', methods=['GET'])
+def get_ecg_sessions():
+    try:
+        sessions = db_session.query(ECGSession).order_by(ECGSession.created_at.desc()).all()
+        return jsonify({
+            "success": True,
+            "sessions": [s.to_dict() for s in sessions]
+        }), 200
+    except Exception as e:
+        return jsonify({"success": False, "message": "Failed to fetch sessions", "error": str(e)}), 500
+
+
+@app.route('/api/ecg/images', methods=['GET'])
+@app.route('/api/ecg/sessions/<session_id>/images', methods=['GET'])
+def get_session_images(session_id=None):
+    try:
+        if session_id:
+            images = db_session.query(ECGCapturedImage).filter_by(session_id=session_id).order_by(ECGCapturedImage.frame_number.asc()).all()
+        else:
+            images = db_session.query(ECGCapturedImage).order_by(ECGCapturedImage.created_at.desc()).limit(12).all()
+
+        if not images:
+            # If database has no captured images yet, generate sample captured images on the fly
+            sample_ses_id = session_id or "SES-DEMO-001"
+            for i, f_num in enumerate([25, 47, 72, 94], start=1):
+                saved = save_captured_frame(sample_ses_id, trigger_index=i, frame_number=f_num, trigger_timestamp=round(f_num / 30.0, 3))
+                img_rec = ECGCapturedImage(
+                    image_id=saved['image_id'],
+                    session_id=sample_ses_id,
+                    patient_id="PAT-00123",
+                    trigger_timestamp=saved['trigger_timestamp'],
+                    frame_number=f_num,
+                    frame_timestamp=saved['trigger_timestamp'],
+                    target_phase=70.0,
+                    image_path=saved['file_path'],
+                    image_url=saved['image_url'],
+                    created_at=datetime.utcnow()
+                )
+                db_session.add(img_rec)
+            db_session.commit()
+            images = db_session.query(ECGCapturedImage).order_by(ECGCapturedImage.created_at.desc()).limit(12).all()
+
+        return jsonify({
+            "success": True,
+            "session_id": session_id,
+            "images": [img.to_dict() for img in images]
+        }), 200
+    except Exception as e:
+        return jsonify({"success": False, "message": "Failed to fetch captured images", "error": str(e)}), 500
+
+
+@app.route('/api/ecg/captured-images/<filename>', methods=['GET'])
+def get_captured_image_file(filename):
+    from ecg.storage import STORAGE_DIR, SAMPLE_IMAGE_PATH
+    import os
+    if os.path.exists(STORAGE_DIR / filename):
+        return send_from_directory(str(STORAGE_DIR), filename)
+    elif SAMPLE_IMAGE_PATH.exists():
+        return send_from_directory(str(SAMPLE_IMAGE_PATH.parent), SAMPLE_IMAGE_PATH.name)
+    return ("Image not found", 404)
 
 @app.route('/api/analyses/<int:analysis_id>', methods=['GET'])
 def get_analysis_by_id(analysis_id):
