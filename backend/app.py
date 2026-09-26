@@ -14,7 +14,7 @@ from email.mime.multipart import MIMEMultipart
 from pathlib import Path
 import numpy as np
 
-# Optional ML/Vision libraries
+
 try:
     import cv2
 except ImportError:
