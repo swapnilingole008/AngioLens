@@ -522,6 +522,101 @@ export default function UploadPage({ onNavigate }) {
           animation: fadeIn 0.3s ease-out;
         }
 
+        /* Top Page Header Banner */
+        .upload-page-header {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          flex-wrap: wrap;
+          gap: 20px;
+          background: #FFFFFF;
+          border: 1.5px solid var(--burgundy-border);
+          border-radius: var(--radius-xl);
+          padding: 24px 32px;
+          box-shadow: var(--card-shadow);
+          overflow: hidden;
+          position: relative;
+        }
+
+        .header-titles {
+          display: flex;
+          flex-direction: column;
+          gap: 4px;
+          max-width: 620px;
+          z-index: 2;
+        }
+
+        .page-title {
+          font-size: 26px;
+          font-weight: 800;
+          color: var(--text-main);
+          letter-spacing: -0.5px;
+          line-height: 1.2;
+        }
+
+        .page-subtitle {
+          font-size: 13.5px;
+          color: var(--text-secondary);
+          line-height: 1.45;
+        }
+
+        .header-decorative-right {
+          display: flex;
+          align-items: center;
+          gap: 16px;
+          z-index: 2;
+        }
+
+        .header-ecg-svg {
+          width: 140px;
+          height: 36px;
+          display: block;
+          flex-shrink: 0;
+        }
+
+        .header-quote-script {
+          font-family: var(--font-script, 'Caveat', cursive);
+          font-size: 20px;
+          font-weight: 700;
+          color: var(--burgundy-primary);
+          white-space: nowrap;
+        }
+
+        .header-heart-thumb {
+          width: 52px;
+          height: 52px;
+          min-width: 52px;
+          max-width: 52px;
+          min-height: 52px;
+          max-height: 52px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          flex-shrink: 0;
+          overflow: hidden;
+        }
+
+        .header-heart-thumb img {
+          width: 100%;
+          height: 100%;
+          max-width: 100%;
+          max-height: 100%;
+          object-fit: contain;
+          mix-blend-mode: multiply;
+          filter: drop-shadow(0 4px 10px rgba(133, 16, 54, 0.15));
+        }
+
+        @media (max-width: 900px) {
+          .upload-page-header {
+            flex-direction: column;
+            align-items: flex-start;
+            padding: 20px;
+          }
+          .header-decorative-right {
+            display: none;
+          }
+        }
+
         .upload-inputs-grid {
           display: grid;
           grid-template-columns: 1fr 1fr;
