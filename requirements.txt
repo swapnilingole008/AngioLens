@@ -1,7 +1,8 @@
-Flask>=2.3.0
-SQLAlchemy>=2.0.0
-psycopg2-binary>=2.9.0
-python-dotenv>=1.0.0
-numpy>=1.24.0
-scipy>=1.10.0
-Werkzeug>=2.3.0
+numpy
+pandas
+tensorflow
+scipy
+opencv-python
+python-dotenv
+flask
+werkzeug
