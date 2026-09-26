@@ -63,6 +63,17 @@ export default function ResultsPage({ currentPath, onNavigate }) {
   const stenosisNum = analysisData?.result?.severity ? Math.round(analysisData.result.severity) : 68;
   const confidenceNum = analysisData?.result?.confidence ? Math.round(analysisData.result.confidence) : 92;
 
+  const isGated = Boolean(
+    analysisData?.result?.detected_region?.includes('Motion-Gated') || 
+    analysisData?.result?.detected_region?.includes('ECG-Gated') ||
+    analysisData?.ecg_gating
+  );
+  let gatedFrameNum = 47;
+  if (analysisData?.result?.detected_region) {
+    const match = analysisData.result.detected_region.match(/Frame #(\d+)/i);
+    if (match) gatedFrameNum = parseInt(match[1]);
+  }
+
   const handleViewFullReport = () => {
     const analysisId = analysisData?.analysis_id || api.getCurrentAnalysisId() || 1;
     api.setCurrentAnalysisId(analysisId);
@@ -84,6 +95,11 @@ export default function ResultsPage({ currentPath, onNavigate }) {
           <div className="patient-tag">
             <span className="patient-id-badge">{patientId}</span>
             <span className="patient-meta">{patientAge} Y/O • {patientGender} • Cath Lab Cranial 35°</span>
+            {isGated && (
+              <span className="ecg-gated-meta-badge">
+                ⚡ ECG-Gated Frame #{gatedFrameNum}
+              </span>
+            )}
           </div>
         </div>
 
@@ -125,7 +141,11 @@ export default function ResultsPage({ currentPath, onNavigate }) {
             </div>
           </div>
 
-          <AngiogramViewer onOpenFullReport={handleViewFullReport} />
+          <AngiogramViewer 
+            onOpenFullReport={handleViewFullReport} 
+            selectedFrame={gatedFrameNum}
+            isGatedMode={isGated}
+          />
         </div>
 
         {/* Right Card: Vessel Metrics & Lesion Quantifications */}
@@ -271,6 +291,19 @@ export default function ResultsPage({ currentPath, onNavigate }) {
         .patient-meta {
           font-size: 12.5px;
           color: var(--text-muted);
+        }
+
+        .ecg-gated-meta-badge {
+          background-color: #FEF3C7;
+          color: #B45309;
+          border: 1px solid #FDE68A;
+          font-weight: 700;
+          font-size: 11px;
+          padding: 3px 9px;
+          border-radius: var(--radius-pill);
+          display: inline-flex;
+          align-items: center;
+          gap: 4px;
         }
 
         .top-bar-right {

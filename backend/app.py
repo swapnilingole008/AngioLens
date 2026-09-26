@@ -26,6 +26,28 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import declarative_base, sessionmaker, scoped_session
 
+# ECG-Gated Imaging Trigger Modules
+try:
+    from ecg import (
+        parse_ecg_csv,
+        preprocess_ecg_signal,
+        detect_r_peaks,
+        calculate_rr_intervals,
+        generate_virtual_triggers,
+        synchronize_frame_with_trigger,
+        get_default_sample_ecg,
+    )
+except ImportError:
+    from .ecg import (
+        parse_ecg_csv,
+        preprocess_ecg_signal,
+        detect_r_peaks,
+        calculate_rr_intervals,
+        generate_virtual_triggers,
+        synchronize_frame_with_trigger,
+        get_default_sample_ecg,
+    )
+
 # 1. Load environment variables from root .env
 root_env = Path(__file__).resolve().parent.parent / '.env'
 if root_env.exists():
@@ -1211,7 +1233,12 @@ def create_analysis():
         affected_vessel = data.get('affected_vessel', 'LAD Proximal')
         severity = data.get('severity', 68.00)
         confidence = data.get('confidence', 92.00)
-        detected_region = data.get('detected_region', 'Proximal segment of LAD')
+        gated_frame = data.get('gated_frame') or data.get('selected_frame')
+        cardiac_phase = data.get('cardiac_phase')
+        if gated_frame and not data.get('detected_region'):
+            detected_region = f"Proximal segment of LAD [Motion-Gated Frame #{gated_frame} @ {cardiac_phase or 70}% Phase]"
+        else:
+            detected_region = data.get('detected_region', 'Proximal segment of LAD')
         model_version = data.get('model_version', 'v1.0.0-qca')
 
         analysis_result = AnalysisResult(
@@ -1240,20 +1267,209 @@ def create_analysis():
         db_session.add(initial_review)
         db_session.commit()
 
-        return jsonify({
+        resp_data = {
             "success": True,
             "message": "Analysis created and processed successfully",
             "analysis_id": analysis.id,
             "patient": patient.to_dict(),
             "analysis": analysis.to_dict(),
             "result": analysis_result.to_dict()
-        }), 201
+        }
+        if gated_frame or data.get('ecg_gating'):
+            resp_data["ecg_gating"] = data.get('ecg_gating') or {
+                "selected_frame": gated_frame,
+                "cardiac_phase": cardiac_phase or 70.0,
+                "trigger_time": data.get('trigger_time'),
+                "rr_interval": data.get('rr_interval'),
+                "heart_rate": data.get('heart_rate')
+            }
+
+        return jsonify(resp_data), 201
     except Exception as e:
         db_session.rollback()
         return jsonify({
             "success": False,
             "message": "Failed to create analysis",
             "error_type": type(e).__name__
+        }), 500
+
+# ----------------- ECG Processing & Motion-Gated Imaging Trigger Endpoints -----------------
+
+@app.route('/api/ecg/sample', methods=['GET'])
+def get_sample_ecg():
+    """
+    Returns pre-computed Lead-II ECG time series, detected R-peaks,
+    RR intervals, heart rate, and virtual trigger synchronization data.
+    """
+    try:
+        target_phase = float(request.args.get('target_phase', 70.0))
+        fps = float(request.args.get('fps', 30.0))
+        total_frames = int(request.args.get('total_frames', 120))
+
+        raw_samples = get_default_sample_ecg()
+        preprocessed = preprocess_ecg_signal(raw_samples)
+        r_peaks = detect_r_peaks(preprocessed)
+        cycles = calculate_rr_intervals(r_peaks)
+        triggers = generate_virtual_triggers(r_peaks, target_phase=target_phase)
+
+        gated_frames = [
+            synchronize_frame_with_trigger(trig, total_frames=total_frames, fps=fps)
+            for trig in triggers
+        ]
+
+        avg_hr = round(sum(c['heart_rate'] for c in cycles) / len(cycles), 1) if cycles else 74.0
+        avg_rr = round(sum(c['rr_interval'] for c in cycles) / len(cycles), 3) if cycles else 0.810
+        avg_conf = round(sum(p['confidence'] for p in r_peaks) / len(r_peaks), 2) if r_peaks else 0.98
+        selected_frame = gated_frames[0]['selected_frame'] if gated_frames else 47
+
+        summary = {
+            "status": "Active",
+            "heart_rate": avg_hr,
+            "rr_interval": avg_rr,
+            "rr_interval_ms": int(round(avg_rr * 1000.0)),
+            "r_peaks_detected": len(r_peaks),
+            "target_phase": target_phase,
+            "trigger_status": "GENERATED",
+            "selected_frame": selected_frame,
+            "confidence": int(round(avg_conf * 100)),
+            "confidence_decimal": avg_conf,
+            "is_simulation": True,
+            "parameter_note": "Prototype/simulation parameter: clinically appropriate phase depends on imaging modality, heart rate, and clinical protocol."
+        }
+
+        # Keep lightweight sample buffer for client-side rendering (first 1000 points ~ 4 sec)
+        return jsonify({
+            "success": True,
+            "summary": summary,
+            "r_peaks": r_peaks,
+            "cycles": cycles,
+            "triggers": triggers,
+            "gated_frames": gated_frames,
+            "samples": raw_samples[:1000],
+            "total_samples": len(raw_samples)
+        }), 200
+    except Exception as e:
+        return jsonify({
+            "success": False,
+            "message": "Failed to generate sample ECG gating",
+            "error": str(e)
+        }), 500
+
+
+@app.route('/api/ecg/process', methods=['POST'])
+def process_ecg():
+    """
+    Accepts raw CSV text, data array, or file upload with timestamp and ECG signal.
+    Runs modular R-peak detection, RR interval calculation, and virtual trigger gating.
+    """
+    try:
+        data = request.get_json() or {}
+        target_phase = float(data.get('target_phase', 70.0))
+        fps = float(data.get('fps', 30.0))
+        total_frames = int(data.get('total_frames', 120))
+
+        csv_text = data.get('csv_text')
+        raw_points = data.get('data')
+
+        if csv_text:
+            parsed = parse_ecg_csv(csv_text)
+        elif raw_points and isinstance(raw_points, list):
+            parsed = raw_points
+        else:
+            parsed = get_default_sample_ecg()
+
+        if not parsed or len(parsed) < 10:
+            return jsonify({
+                "success": False,
+                "message": "Insufficient or invalid ECG data points provided. Format: timestamp,ecg"
+            }), 400
+
+        preprocessed = preprocess_ecg_signal(parsed)
+        r_peaks = detect_r_peaks(preprocessed)
+        cycles = calculate_rr_intervals(r_peaks)
+        triggers = generate_virtual_triggers(r_peaks, target_phase=target_phase)
+
+        gated_frames = [
+            synchronize_frame_with_trigger(trig, total_frames=total_frames, fps=fps)
+            for trig in triggers
+        ]
+
+        avg_hr = round(sum(c['heart_rate'] for c in cycles) / len(cycles), 1) if cycles else 74.0
+        avg_rr = round(sum(c['rr_interval'] for c in cycles) / len(cycles), 3) if cycles else 0.810
+        avg_conf = round(sum(p['confidence'] for p in r_peaks) / len(r_peaks), 2) if r_peaks else 0.98
+        selected_frame = gated_frames[0]['selected_frame'] if gated_frames else 1
+
+        summary = {
+            "status": "Active",
+            "heart_rate": avg_hr,
+            "rr_interval": avg_rr,
+            "rr_interval_ms": int(round(avg_rr * 1000.0)),
+            "r_peaks_detected": len(r_peaks),
+            "target_phase": target_phase,
+            "trigger_status": "GENERATED" if triggers else "WAITING",
+            "selected_frame": selected_frame,
+            "confidence": int(round(avg_conf * 100)),
+            "confidence_decimal": avg_conf,
+            "is_simulation": True,
+            "parameter_note": "Prototype/simulation parameter: clinically appropriate phase depends on imaging modality, heart rate, and clinical protocol."
+        }
+
+        # Keep output sample count efficient for browser transfer
+        output_samples = parsed
+        if len(output_samples) > 2000:
+            step = len(output_samples) // 2000
+            output_samples = output_samples[::step]
+
+        return jsonify({
+            "success": True,
+            "summary": summary,
+            "r_peaks": r_peaks,
+            "cycles": cycles,
+            "triggers": triggers,
+            "gated_frames": gated_frames,
+            "samples": output_samples[:1000],
+            "total_samples": len(parsed)
+        }), 200
+    except Exception as e:
+        return jsonify({
+            "success": False,
+            "message": "Failed to process ECG",
+            "error": str(e)
+        }), 500
+
+
+@app.route('/api/ecg/gate-frame', methods=['POST'])
+def gate_frame():
+    """
+    Calculates the exact frame index for a specific virtual trigger event.
+    """
+    try:
+        data = request.get_json() or {}
+        trigger_time = float(data.get('trigger_time', 0.0))
+        target_phase = float(data.get('target_phase', 70.0))
+        fps = float(data.get('fps', 30.0))
+        total_frames = int(data.get('total_frames', 120))
+        rr_interval = float(data.get('rr_interval', 0.81))
+        heart_rate = float(data.get('heart_rate', 74.0))
+
+        trig_event = {
+            "trigger_time": trigger_time,
+            "cardiac_phase": target_phase,
+            "rr_interval": rr_interval,
+            "heart_rate": heart_rate,
+            "confidence": float(data.get('confidence', 0.98))
+        }
+
+        result = synchronize_frame_with_trigger(trig_event, total_frames=total_frames, fps=fps)
+        return jsonify({
+            "success": True,
+            "gating_result": result
+        }), 200
+    except Exception as e:
+        return jsonify({
+            "success": False,
+            "message": "Failed to gate frame",
+            "error": str(e)
         }), 500
 
 @app.route('/api/analyses/<int:analysis_id>', methods=['GET'])

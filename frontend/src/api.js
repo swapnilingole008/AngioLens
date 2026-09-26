@@ -395,6 +395,22 @@ export const api = {
     }
     return res;
   },
+
+  // ECG-Gated Imaging Trigger
+  getSampleECG: (targetPhase = 70.0, fps = 30.0, totalFrames = 120) =>
+    request(`/ecg/sample?target_phase=${targetPhase}&fps=${fps}&total_frames=${totalFrames}`),
+
+  processECG: (payload) =>
+    request('/ecg/process', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+
+  gateFrame: (payload) =>
+    request('/ecg/gate-frame', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
 };
 
 export default api;
