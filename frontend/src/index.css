@@ -7,6 +7,7 @@
   /* Color Palette - Precise Match to Reference Designs */
   --burgundy-primary: #851036;
   --burgundy-dark: #6D0B2B;
+  --burgundy-hover: #6D0B2B;
   --burgundy-light: #9E1B44;
   --burgundy-subtle: rgba(133, 16, 54, 0.08);
   --burgundy-border: #DFA0AF;
@@ -136,7 +137,7 @@ html, body {
   justify-content: center;
   gap: 8px;
   background-color: var(--burgundy-primary);
-  color: #FFFFFF;
+  color: #FFFFFF !important;
   border: none;
   border-radius: var(--radius-sm);
   padding: 10px 20px;
@@ -145,10 +146,15 @@ html, body {
   cursor: pointer;
   transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
   text-decoration: none;
+  opacity: 1 !important;
+  visibility: visible !important;
 }
 
 .btn-burgundy:hover {
-  background-color: var(--burgundy-dark);
+  background-color: var(--burgundy-dark, #6D0B2B) !important;
+  color: #FFFFFF !important;
+  opacity: 1 !important;
+  visibility: visible !important;
   transform: translateY(-1px);
   box-shadow: 0 4px 12px rgba(133, 16, 54, 0.25);
 }

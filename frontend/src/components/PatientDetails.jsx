@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { Play } from 'lucide-react';
 
-export default function PatientDetails({ onRunAnalysis }) {
+export default function PatientDetails({ onRunAnalysis, submitButtonText = 'Run Analysis' }) {
   const [patientId, setPatientId] = useState('PAT-00123');
   const [age, setAge] = useState('56');
   const [gender, setGender] = useState('Male');
@@ -71,7 +71,7 @@ export default function PatientDetails({ onRunAnalysis }) {
       {/* Full Width Run Analysis CTA */}
       <button type="submit" className="btn-burgundy run-analysis-btn">
         <Play size={16} fill="currentColor" />
-        <span>Run Analysis</span>
+        <span>{submitButtonText}</span>
       </button>
 
       <style>{`
@@ -126,6 +126,10 @@ export default function PatientDetails({ onRunAnalysis }) {
           min-width: 0;
         }
 
+        .form-input, .form-select {
+          height: 38px;
+        }
+
         .form-input:focus, .form-select:focus, .form-textarea:focus {
           background-color: #FFFFFF;
           border-color: var(--burgundy-primary);
@@ -141,9 +145,14 @@ export default function PatientDetails({ onRunAnalysis }) {
         .form-select {
           width: 100%;
           cursor: pointer;
-          appearance: auto;
+          appearance: none;
+          -webkit-appearance: none;
           min-width: 0;
           box-sizing: border-box;
+          padding-right: 30px;
+          background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23851036' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+          background-repeat: no-repeat;
+          background-position: right 10px center;
         }
 
         .form-textarea {
@@ -157,12 +166,19 @@ export default function PatientDetails({ onRunAnalysis }) {
           font-size: 15px;
           border-radius: var(--radius-sm);
           margin-top: 6px;
-          background-color: var(--burgundy-primary);
+          background-color: var(--burgundy-primary) !important;
+          color: #FFFFFF !important;
           box-shadow: 0 4px 12px rgba(133, 16, 54, 0.25);
+          transition: all 0.2s ease;
+          opacity: 1 !important;
+          visibility: visible !important;
         }
 
         .run-analysis-btn:hover {
-          background-color: var(--burgundy-dark);
+          background-color: #6D0B2B !important;
+          color: #FFFFFF !important;
+          opacity: 1 !important;
+          visibility: visible !important;
         }
       `}</style>
     </form>
