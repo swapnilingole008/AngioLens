@@ -20,3 +20,5 @@ uploads/
 
 # Medical / patient data
 patient_data/
+
+models/mitdb/
