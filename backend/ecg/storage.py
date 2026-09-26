@@ -42,7 +42,8 @@ def save_captured_frame(
     }
     """
     ensure_storage_dir()
-    image_filename = f"trigger_{trigger_index:03d}_{session_id[:8] if session_id else 'ses'}.png"
+    clean_ses = session_id.replace('-', '_') if session_id else uuid.uuid4().hex[:8]
+    image_filename = f"peak_{trigger_index:03d}_{clean_ses}_frame_{frame_number}.jpg"
     target_path = STORAGE_DIR / image_filename
 
     extracted = False
