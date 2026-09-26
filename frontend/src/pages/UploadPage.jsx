@@ -144,9 +144,15 @@ export default function UploadPage({ onNavigate }) {
         <ECGGatingPanel 
           onSelectFrame={handleFrameSelectedByTrigger}
           onGatingUpdate={setGatingTriggerData}
+          onRunVesselAnalysisOnFrame={(frameNum) => handleRunAnalysis({ patientId: 'PAT-00123' })}
           externalPlaybackTime={currentPlaybackTime}
           totalFrames={120}
           fps={30}
+          videoStatus={
+            videoSrc 
+              ? (selectedFile?.name || 'coronary_cine.mp4') 
+              : (selectedFile?.name?.match(/\.(mp4|avi|mov|webm)$/i) ? selectedFile.name : 'Not provided')
+          }
         />
       )}
 
@@ -549,6 +555,18 @@ export default function UploadPage({ onNavigate }) {
           border-radius: 6px;
           display: flex;
           justify-content: space-between;
+          background-color: var(--burgundy-primary) !important;
+          color: #FFFFFF !important;
+          opacity: 1 !important;
+          visibility: visible !important;
+          transition: all 0.2s ease;
+        }
+
+        .view-detailed-report-btn:hover {
+          background-color: #6D0B2B !important;
+          color: #FFFFFF !important;
+          opacity: 1 !important;
+          visibility: visible !important;
         }
 
         @media (max-width: 1200px) {

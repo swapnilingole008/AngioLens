@@ -411,6 +411,18 @@ export const api = {
       method: 'POST',
       body: JSON.stringify(payload),
     }),
+
+  createECGSession: (payload) =>
+    request('/ecg/session', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+
+  getECGSessions: () =>
+    request('/ecg/sessions'),
+
+  getCapturedImages: (sessionId = null) =>
+    request(sessionId ? `/ecg/sessions/${sessionId}/images` : '/ecg/images'),
 };
 
 export default api;
