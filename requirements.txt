@@ -1,0 +1,8 @@
+numpy
+pandas
+tensorflow
+scipy
+opencv-python
+python-dotenv
+flask
+werkzeug
