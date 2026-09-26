@@ -179,7 +179,18 @@ def load_csv(csv_path):
         "value",
         "Value",
         "ecg_signal",
-        "ECG_signal"
+        "ECG_signal",
+        "lead_ii",
+        "Lead_II",
+        "lead2",
+        "Lead2",
+        "lead_2",
+        "voltage",
+        "Voltage",
+        "raw",
+        "Raw",
+        "mv",
+        "mV"
     ]
 
     ecg_column = None
@@ -198,7 +209,12 @@ def load_csv(csv_path):
             "timestamp",
             "r_peak",
             "label",
-            "target"
+            "target",
+            "r_peak_probability",
+            "r_peak_probability_raw",
+            "predicted_r_peak",
+            "predicted_peak",
+            "predicted_peaks"
         }
 
         numeric_columns = [
@@ -481,9 +497,16 @@ def main():
     )
 
     parser.add_argument(
+        "csv_file",
+        nargs="?",
+        default=None,
+        help="Path to ECG CSV file (positional argument or use --csv)."
+    )
+
+    parser.add_argument(
         "--csv",
         type=str,
-        default=str(DEFAULT_CSV),
+        default=None,
         help="Path to ECG CSV."
     )
 
@@ -525,7 +548,8 @@ def main():
     args = parser.parse_args()
 
     model_path = Path(args.model)
-    csv_path = Path(args.csv)
+    csv_arg = args.csv_file or args.csv or str(DEFAULT_CSV)
+    csv_path = Path(csv_arg)
 
     print("=" * 70)
     print("CardioAI - ECG R-Peak Model Testing")

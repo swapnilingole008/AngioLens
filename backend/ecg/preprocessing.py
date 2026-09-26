@@ -12,48 +12,110 @@ def parse_ecg_csv(csv_content):
     """
     Parses a CSV string or file-like object containing timestamp and ecg values.
     Supports formats:
-    - timestamp,ecg
-    - time,voltage
-    - time,signal
-    - or simply 2 numeric columns without headers
+    - timestamp,ecg (with or without headers)
+    - time_sec,ecg,r_peak,...
+    - ecg,time
+    - semicolon or tab separated
+    - single column ecg
+    - handles quotes and Windows UTF-8 BOM
     Returns list of dicts: [{'timestamp': float, 'ecg': float}, ...]
     """
     if isinstance(csv_content, bytes):
-        csv_content = csv_content.decode('utf-8', errors='ignore')
+        csv_content = csv_content.decode('utf-8-sig', errors='ignore')
+    elif isinstance(csv_content, str) and csv_content.startswith('\ufeff'):
+        csv_content = csv_content[1:]
 
-    lines = [line.strip() for line in csv_content.strip().splitlines() if line.strip()]
-    if not lines:
+    if not csv_content or not csv_content.strip():
         return []
 
-    data = []
+    # Detect delimiter: comma, semicolon, tab
+    first_few_lines = [l for l in csv_content.strip().splitlines() if l.strip()][:5]
+    if not first_few_lines:
+        return []
+
+    sample_line = first_few_lines[0]
+    delimiter = ','
+    if ';' in sample_line and sample_line.count(';') > sample_line.count(','):
+        delimiter = ';'
+    elif '\t' in sample_line and sample_line.count('\t') > sample_line.count(','):
+        delimiter = '\t'
+
+    reader = csv.reader(io.StringIO(csv_content.strip()), delimiter=delimiter)
+    rows = [r for r in reader if r and any(cell.strip() for cell in r)]
+    if not rows:
+        return []
+
+    # Column identification
+    time_names = {'time', 'time_sec', 'timestamp', 't', 'sec', 'seconds', 'time(s)', 'timesec'}
+    ecg_names = {'ecg', 'signal', 'lead_ii', 'lead2', 'lead_2', 'voltage', 'val', 'value', 'raw', 'mv'}
+
+    first_row = [c.strip().lower() for c in rows[0]]
     has_header = False
 
-    # Check first line for non-numeric column headers
-    first_row = [col.strip().lower() for col in lines[0].split(',')]
-    if any(col in ('timestamp', 'time', 't', 'ecg', 'signal', 'lead_ii', 'voltage', 'val') for col in first_row):
-        has_header = True
-    elif not all(_is_float(c) for c in first_row if c):
-        has_header = True
+    time_idx = None
+    ecg_idx = None
+
+    for idx, col in enumerate(first_row):
+        col_clean = col.replace('"', '').replace("'", "").strip()
+        if col_clean in time_names and time_idx is None:
+            time_idx = idx
+            has_header = True
+        elif col_clean in ecg_names and ecg_idx is None:
+            ecg_idx = idx
+            has_header = True
+
+    if not has_header:
+        # Check if first row contains non-numeric strings
+        if not all(_is_float(c) for c in first_row if c.strip()):
+            has_header = True
 
     start_idx = 1 if has_header else 0
+    data_rows = rows[start_idx:]
+    if not data_rows:
+        return []
 
-    for idx, line in enumerate(lines[start_idx:], start=start_idx):
-        parts = [p.strip() for p in line.split(',') if p.strip()]
-        if len(parts) >= 2:
-            try:
-                t = float(parts[0])
-                val = float(parts[1])
-                data.append({'timestamp': round(t, 4), 'ecg': val})
-            except ValueError:
+    # If column indices not found by explicit header name, inspect data
+    first_data_cells = [c.strip() for c in data_rows[0] if c.strip()]
+    num_cols = len(data_rows[0])
+
+    if ecg_idx is None:
+        if num_cols >= 2:
+            if time_idx == 0:
+                ecg_idx = 1
+            elif time_idx == 1:
+                ecg_idx = 0
+            else:
+                time_idx = 0
+                ecg_idx = 1
+        else:
+            ecg_idx = 0
+
+    data = []
+    sample_rate_dt = 0.004 # 250 Hz default step
+
+    for row_idx, row in enumerate(data_rows):
+        if not row:
+            continue
+        try:
+            # Extract ECG value
+            if ecg_idx is not None and ecg_idx < len(row):
+                raw_ecg_str = row[ecg_idx].strip()
+                if not raw_ecg_str:
+                    continue
+                ecg_val = float(raw_ecg_str)
+            else:
                 continue
-        elif len(parts) == 1:
-            try:
-                val = float(parts[0])
-                # Impute timestamp at 250Hz default if only 1 column
-                t = round((idx - start_idx) * 0.004, 4)
-                data.append({'timestamp': t, 'ecg': val})
-            except ValueError:
-                continue
+
+            # Extract Timestamp
+            if time_idx is not None and time_idx < len(row):
+                raw_time_str = row[time_idx].strip()
+                t_val = float(raw_time_str) if raw_time_str else (row_idx * sample_rate_dt)
+            else:
+                t_val = row_idx * sample_rate_dt
+
+            data.append({'timestamp': round(t_val, 4), 'ecg': ecg_val})
+        except (ValueError, TypeError):
+            continue
 
     return data
 
