@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { UploadCloud, FileText, CheckCircle2, X } from 'lucide-react';
+import { UploadCloud, FileText, CheckCircle2, X, Activity } from 'lucide-react';
 import angiogramSample from '../assets/images/angiogram-sample.jpg';
 
 export default function UploadBox({ onFileSelect }) {
@@ -8,18 +8,33 @@ export default function UploadBox({ onFileSelect }) {
     size: '12.4 MB',
     status: 'Uploaded successfully',
     preview: angiogramSample,
+    isCsv: false,
   });
+  const [isDragging, setIsDragging] = useState(false);
+
+  const processSelectedFile = (selected) => {
+    if (!selected) return;
+    const isCsv = selected.name.toLowerCase().endsWith('.csv') || selected.name.toLowerCase().endsWith('.txt');
+    const sizeStr = selected.size > 1024 * 1024
+      ? `${(selected.size / (1024 * 1024)).toFixed(1)} MB`
+      : `${(selected.size / 1024).toFixed(1)} KB`;
+
+    setFile({
+      name: selected.name,
+      size: sizeStr,
+      status: isCsv ? 'ECG Recording Ready' : 'Uploaded successfully',
+      isCsv,
+      preview: isCsv ? null : angiogramSample,
+      rawFile: selected,
+    });
+    if (onFileSelect) {
+      onFileSelect(selected, { isEcgCsv: isCsv });
+    }
+  };
 
   const handleFileChange = (e) => {
     if (e.target.files && e.target.files[0]) {
-      const selected = e.target.files[0];
-      setFile({
-        name: selected.name,
-        size: `${(selected.size / (1024 * 1024)).toFixed(1)} MB`,
-        status: 'Uploaded successfully',
-        preview: angiogramSample,
-      });
-      if (onFileSelect) onFileSelect(selected);
+      processSelectedFile(e.target.files[0]);
     }
   };
 
@@ -30,11 +45,31 @@ export default function UploadBox({ onFileSelect }) {
   return (
     <div className="upload-box-wrapper">
       {/* Dashed Drop Zone */}
-      <label className="dashed-drop-zone">
+      <label 
+        className={`dashed-drop-zone ${isDragging ? 'dragging' : ''}`}
+        onDragOver={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          setIsDragging(true);
+        }}
+        onDragLeave={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          setIsDragging(false);
+        }}
+        onDrop={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          setIsDragging(false);
+          if (e.dataTransfer.files && e.dataTransfer.files[0]) {
+            processSelectedFile(e.dataTransfer.files[0]);
+          }
+        }}
+      >
         <input 
           type="file" 
           className="file-input-hidden" 
-          accept=".dcm,.jpg,.jpeg,.png,.mp4" 
+          accept=".dcm,.jpg,.jpeg,.png,.mp4,.csv,.txt" 
           onChange={handleFileChange}
         />
         <div className="upload-cloud-circle">
@@ -58,13 +93,20 @@ export default function UploadBox({ onFileSelect }) {
       {/* Uploaded File Pill / Card */}
       {file && (
         <div className="uploaded-file-card">
-          <div className="file-thumbnail">
-            <img src={file.preview} alt="Angiogram preview" />
+          <div className={`file-thumbnail ${file.isCsv ? 'ecg-thumbnail' : ''}`}>
+            {file.isCsv ? (
+              <Activity size={24} className="ecg-thumb-icon" />
+            ) : (
+              <img src={file.preview} alt="Angiogram preview" />
+            )}
           </div>
 
           <div className="file-metadata">
             <span className="filename">{file.name}</span>
-            <span className="filesize">{file.size} • {file.status}</span>
+            <span className="filesize">
+              {file.size} • {file.status}
+              {file.isCsv && <span className="csv-badge-pill">ECG Waveform</span>}
+            </span>
           </div>
 
           <div className="file-actions">
@@ -97,7 +139,8 @@ export default function UploadBox({ onFileSelect }) {
           position: relative;
         }
 
-        .dashed-drop-zone:hover {
+        .dashed-drop-zone:hover,
+        .dashed-drop-zone.dragging {
           border-color: var(--burgundy-primary);
           background-color: #FFF2F5;
         }
@@ -160,6 +203,28 @@ export default function UploadBox({ onFileSelect }) {
           flex-shrink: 0;
         }
 
+        .file-thumbnail.ecg-thumbnail {
+          background: linear-gradient(135deg, #851036 0%, #A31443 100%);
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          color: #FFFFFF;
+        }
+
+        .ecg-thumb-icon {
+          animation: pulse 2s infinite ease-in-out;
+        }
+
+        .csv-badge-pill {
+          margin-left: 8px;
+          padding: 2px 7px;
+          background-color: rgba(133, 16, 54, 0.1);
+          color: #851036;
+          font-size: 11px;
+          font-weight: 600;
+          border-radius: 10px;
+        }
+
         .file-thumbnail img {
           width: 100%;
           height: 100%;
@@ -182,6 +247,8 @@ export default function UploadBox({ onFileSelect }) {
         .filesize {
           font-size: 11.5px;
           color: var(--text-muted);
+          display: flex;
+          align-items: center;
         }
 
         .file-actions {

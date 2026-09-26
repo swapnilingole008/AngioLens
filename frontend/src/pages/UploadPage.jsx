@@ -1,92 +1,130 @@
 import React, { useState } from 'react';
-import { FileText, Download, BarChart2, Activity, Zap, Layers, Sparkles } from 'lucide-react';
-import UploadBox from '../components/UploadBox';
-import PatientDetails from '../components/PatientDetails';
-import AngiogramViewer from '../components/AngiogramViewer';
-import ECGGatingPanel from '../components/ECGGatingPanel';
+import { 
+  Activity, 
+  Film, 
+  FileText, 
+  UploadCloud, 
+  CheckCircle2, 
+  X, 
+  AlertCircle, 
+  Loader2, 
+  Play, 
+  Clock, 
+  Heart, 
+  Sparkles,
+  RefreshCw
+} from 'lucide-react';
 import heartImg from '../assets/images/heart-illustration.png';
 import api from '../api';
 
 export default function UploadPage({ onNavigate }) {
-  const [pipelineMode, setPipelineMode] = useState('ecg_gated'); // 'ecg_gated' | 'standard'
-  const [selectedFile, setSelectedFile] = useState({ name: 'patient_001_angio.dcm' });
-  const [videoSrc, setVideoSrc] = useState(null);
-  const [gatedFrame, setGatedFrame] = useState(47);
-  const [gatingTriggerData, setGatingTriggerData] = useState({
-    trigger_time: 2.34,
-    cardiac_phase: 70,
-    rr_interval: 0.81,
-    heart_rate: 74,
-    confidence: 0.98,
-    selected_frame: 47,
-  });
-  const [currentPlaybackTime, setCurrentPlaybackTime] = useState(0);
+  // Input files state
+  const [ecgFile, setEcgFile] = useState(null);
+  const [useSampleEcg, setUseSampleEcg] = useState(true); // Default to true so demo runs out-of-the-box
+  const [videoFile, setVideoFile] = useState(null);
+  const [useSampleVideo, setUseSampleVideo] = useState(true); // Default to true so demo runs out-of-the-box
 
-  const handleFileSelect = (file) => {
-    setSelectedFile(file);
-    if (file && file.type && file.type.startsWith('video/')) {
-      try {
-        const url = URL.createObjectURL(file);
-        setVideoSrc(url);
-      } catch (e) {
-        console.warn('Could not create object URL for video:', e);
-      }
-    }
+  // Patient inputs
+  const [patientId, setPatientId] = useState('PAT-00123');
+  const [age, setAge] = useState('56');
+  const [gender, setGender] = useState('Male');
+  const [notes, setNotes] = useState('Diagnostic coronary catheterization. Motion-synchronized cine review.');
+
+  // Processing state & multi-step progress loader
+  const [isProcessing, setIsProcessing] = useState(false);
+  const [processingStep, setProcessingStep] = useState(0); // 0: idle, 1: upload, 2: ecg, 3: rpeaks, 4: matching, 5: capture, 6: done
+  const [processingError, setProcessingError] = useState(null);
+
+  // Drag states
+  const [isDraggingEcg, setIsDraggingEcg] = useState(false);
+  const [isDraggingVideo, setIsDraggingVideo] = useState(false);
+
+  // Handle ECG file selection
+  const handleEcgFile = (file) => {
+    if (!file) return;
+    setEcgFile(file);
+    setUseSampleEcg(false);
   };
 
-  const handleFrameSelectedByTrigger = (frame, triggerData) => {
-    setGatedFrame(frame);
-    if (triggerData) {
-      setGatingTriggerData(triggerData);
-    }
+  // Handle Video file selection
+  const handleVideoFile = (file) => {
+    if (!file) return;
+    setVideoFile(file);
+    setUseSampleVideo(false);
   };
 
-  const handleRunAnalysis = async (patientData) => {
+  // Submit and run backend ECG + Video processing
+  const handleStartProcessing = async (e) => {
+    if (e) e.preventDefault();
+    if (isProcessing) return; // Prevent duplicate submissions
+
+    setIsProcessing(true);
+    setProcessingError(null);
+    setProcessingStep(1); // Upload started
+
     try {
-      const isGated = pipelineMode === 'ecg_gated';
-      const fileName = selectedFile?.name || (isGated ? `coronary_cine_gated_frame_${gatedFrame}.dcm` : 'patient_001_angio.dcm');
-      
-      const payload = {
-        patient_id: patientData?.patientId || 'PAT-00123',
-        age: patientData?.age ? parseInt(patientData.age) : 56,
-        gender: patientData?.gender || 'Male',
-        uploaded_file_name: fileName,
-        affected_vessel: 'LAD Proximal',
-        severity: 68.0,
-        confidence: 92.0,
-        detected_region: isGated 
-          ? `Proximal segment of LAD [Motion-Gated Frame #${gatedFrame} @ ${gatingTriggerData?.cardiac_phase || 70}% Phase]`
-          : 'Proximal segment of LAD',
-        model_version: 'v1.0.0-qca',
-        gated_frame: isGated ? gatedFrame : undefined,
-        cardiac_phase: isGated ? (gatingTriggerData?.cardiac_phase || 70) : undefined,
-        trigger_time: isGated ? (gatingTriggerData?.trigger_time || 2.34) : undefined,
-        rr_interval: isGated ? (gatingTriggerData?.rr_interval || 0.81) : undefined,
-        heart_rate: isGated ? (gatingTriggerData?.heart_rate || 74) : undefined,
-      };
+      const formData = new FormData();
 
-      const res = await api.createAnalysis(payload);
-      if (res.analysis_id) {
-        api.setCurrentAnalysisId(res.analysis_id);
+      if (ecgFile && !useSampleEcg) {
+        formData.append('ecg_file', ecgFile);
+      }
+      if (videoFile && !useSampleVideo) {
+        formData.append('video_file', videoFile);
+      }
+      formData.append('patient_id', patientId || 'PAT-00123');
+      formData.append('age', age || '56');
+      formData.append('gender', gender || 'Male');
+      formData.append('notes', notes || '');
+
+      // Simulate visible progress step intervals during processing
+      const stepTimer1 = setTimeout(() => setProcessingStep(2), 500);  // ECG loaded
+      const stepTimer2 = setTimeout(() => setProcessingStep(3), 1100); // Detecting R-peaks
+      const stepTimer3 = setTimeout(() => setProcessingStep(4), 1800); // Matching frames
+      const stepTimer4 = setTimeout(() => setProcessingStep(5), 2400); // Capturing images
+
+      const response = await api.processECGVideo(formData);
+
+      clearTimeout(stepTimer1);
+      clearTimeout(stepTimer2);
+      clearTimeout(stepTimer3);
+      clearTimeout(stepTimer4);
+
+      if (response && (response.status === 'success' || response.r_peaks)) {
+        setProcessingStep(6); // Processing completed
+
+        // Store result for instant access on Results Page
+        api.setLatestECGResult(response);
+        if (response.analysis_id) {
+          api.setCurrentAnalysisId(response.analysis_id);
+        }
+
+        // Brief delay for the user to see "Processing completed" before navigating
+        setTimeout(() => {
+          setIsProcessing(false);
+          onNavigate('/results');
+        }, 800);
+      } else {
+        throw new Error(response?.error || response?.message || 'Processing failed to return expected ECG data');
       }
     } catch (err) {
-      console.error('Failed to create analysis:', err);
+      console.error('ECG/Video Processing Error:', err);
+      setIsProcessing(false);
+      setProcessingError(err?.message || 'Failed to process ECG and video. Please verify server connection and try again.');
     }
-    onNavigate('/results');
   };
 
   return (
-    <div className="upload-page-container">
+    <div className="upload-page-clean-container">
       {/* Top Page Header */}
       <div className="upload-page-header">
         <div className="header-titles">
-          <h1 className="page-title">Coronary Angiogram Analysis</h1>
+          <h1 className="page-title">ECG-Gated Angiography Acquisition</h1>
           <p className="page-subtitle">
-            AI-powered coronary vessel and stenosis analysis with motion-synchronized ECG gating.
+            Upload patient ECG signal and coronary cine stream. The integrated CardioAI model detects exact R-peaks and synchronizes imaging frames.
           </p>
         </div>
 
-        {/* Right Decorative ECG + Script Quote + Subtle Heart */}
+        {/* Right Decorative ECG + Script Quote */}
         <div className="header-decorative-right">
           <svg className="header-ecg-svg" viewBox="0 0 160 40" preserveAspectRatio="none">
             <path
@@ -104,478 +142,809 @@ export default function UploadPage({ onNavigate }) {
         </div>
       </div>
 
-      {/* Mode Selector Tabs (Hackathon ECG-Gated vs Standard) */}
-      <div className="pipeline-mode-selector-strip">
-        <div className="mode-toggle-group">
-          <button 
-            type="button"
-            className={`mode-btn ${pipelineMode === 'ecg_gated' ? 'active' : ''}`}
-            onClick={() => setPipelineMode('ecg_gated')}
-          >
-            <Activity size={15} />
-            <span>ECG-Gated Motion Trigger (Hackathon Pipeline)</span>
-            <span className="mode-badge-pill">Synchronized AI</span>
-          </button>
-          <button 
-            type="button"
-            className={`mode-btn ${pipelineMode === 'standard' ? 'active' : ''}`}
-            onClick={() => setPipelineMode('standard')}
-          >
-            <FileText size={15} />
-            <span>Standard Static Angiogram</span>
-          </button>
-        </div>
-
-        <div className="mode-info-tag">
-          {pipelineMode === 'ecg_gated' ? (
-            <span>
-              ⚡ <strong>Motion-Gated Pipeline:</strong> ECG R-Peak → 70% Cardiac Phase → Virtual Trigger → Frame Selection → AI Analysis
-            </span>
-          ) : (
-            <span>
-              📄 <strong>Standard Flow:</strong> Image Upload → AI Vessel/Stenosis Analysis
-            </span>
-          )}
-        </div>
-      </div>
-
-      {/* Dedicated ECG Gating Section (when ECG-Gated mode is active) */}
-      {pipelineMode === 'ecg_gated' && (
-        <ECGGatingPanel 
-          onSelectFrame={handleFrameSelectedByTrigger}
-          onGatingUpdate={setGatingTriggerData}
-          onRunVesselAnalysisOnFrame={(frameNum) => handleRunAnalysis({ patientId: 'PAT-00123' })}
-          externalPlaybackTime={currentPlaybackTime}
-          totalFrames={120}
-          fps={30}
-          videoStatus={
-            videoSrc 
-              ? (selectedFile?.name || 'coronary_cine.mp4') 
-              : (selectedFile?.name?.match(/\.(mp4|avi|mov|webm)$/i) ? selectedFile.name : 'Not provided')
-          }
-        />
-      )}
-
-      {/* Main 2-Column Section */}
-      <div className="upload-grid-layout">
-        {/* Left Column: Upload Angiogram & Patient Details */}
-        <div className="angio-card upload-step-card">
-          <div className="step-header">
-            <div className="step-badge">1</div>
-            <div className="step-title-group">
-              <h2 className="step-title">
-                {pipelineMode === 'ecg_gated' ? 'Angiography Cine Stream & Patient' : 'Upload Angiogram'}
-              </h2>
-              <p className="step-subtitle">
-                {pipelineMode === 'ecg_gated'
-                  ? 'Sequential coronary cine frames / video synchronized with virtual ECG trigger'
-                  : 'Supported formats: DICOM, JPG, PNG, MP4 (max 200 MB)'}
-              </p>
+      {/* Main Upload & Input Grid */}
+      <form onSubmit={handleStartProcessing} className="upload-inputs-grid">
+        
+        {/* Card 1: ECG Signal Upload */}
+        <div className="angio-card input-card">
+          <div className="card-top-header">
+            <div className="card-icon-badge">
+              <Activity size={20} />
+            </div>
+            <div>
+              <h2 className="card-section-title">1. Upload ECG Signal</h2>
+              <p className="card-section-subtitle">Lead II CSV/TXT format (100–500 Hz)</p>
             </div>
           </div>
 
-          <UploadBox onFileSelect={handleFileSelect} />
+          {/* ECG Dropzone */}
+          <label
+            className={`file-dropzone ${isDraggingEcg ? 'dragging' : ''}`}
+            onDragOver={(e) => { e.preventDefault(); setIsDraggingEcg(true); }}
+            onDragLeave={() => setIsDraggingEcg(false)}
+            onDrop={(e) => {
+              e.preventDefault();
+              setIsDraggingEcg(false);
+              if (e.dataTransfer.files?.[0]) handleEcgFile(e.dataTransfer.files[0]);
+            }}
+          >
+            <input
+              type="file"
+              accept=".csv,.txt"
+              className="hidden-file-input"
+              onChange={(e) => {
+                if (e.target.files?.[0]) handleEcgFile(e.target.files[0]);
+              }}
+            />
+            <div className="upload-icon-circle">
+              <Activity size={24} />
+            </div>
+            <p className="drop-main-text">Drag & drop ECG signal file</p>
+            <span className="drop-or-text">or click to browse (.csv, .txt)</span>
+          </label>
 
-          <PatientDetails 
-            onRunAnalysis={handleRunAnalysis} 
-            submitButtonText={
-              pipelineMode === 'ecg_gated' 
-                ? `Analyze Gated Frame #${gatedFrame} →` 
-                : 'Run AI Analysis →'
-            }
-          />
+          {/* Active ECG File Status / Preloaded Switch */}
+          <div className="file-selection-status-box">
+            {useSampleEcg ? (
+              <div className="selected-file-row sample-active">
+                <div className="file-meta">
+                  <CheckCircle2 size={18} className="success-icon" />
+                  <span className="file-name">sample_ecg.csv (Preloaded 360 Hz Signal)</span>
+                </div>
+                <button
+                  type="button"
+                  className="switch-file-btn"
+                  onClick={() => {
+                    setUseSampleEcg(false);
+                    setEcgFile(null);
+                  }}
+                  title="Upload your own file"
+                >
+                  Upload custom
+                </button>
+              </div>
+            ) : ecgFile ? (
+              <div className="selected-file-row">
+                <div className="file-meta">
+                  <CheckCircle2 size={18} className="success-icon" />
+                  <span className="file-name">{ecgFile.name} ({(ecgFile.size / 1024).toFixed(1)} KB)</span>
+                </div>
+                <button
+                  type="button"
+                  className="remove-btn"
+                  onClick={() => setEcgFile(null)}
+                  title="Remove file"
+                >
+                  <X size={15} />
+                </button>
+              </div>
+            ) : (
+              <div className="no-file-row">
+                <span className="no-file-text">No custom ECG file selected</span>
+                <button
+                  type="button"
+                  className="use-sample-btn"
+                  onClick={() => setUseSampleEcg(true)}
+                >
+                  Use Preloaded sample_ecg.csv
+                </button>
+              </div>
+            )}
+          </div>
         </div>
 
-        {/* Right Column: Analysis Results */}
-        <div className="angio-card results-step-card">
-          <div className="step-header-with-action">
-            <div className="step-header">
-              <div className="step-badge">2</div>
-              <div className="step-title-group">
-                <h2 className="step-title">
-                  {pipelineMode === 'ecg_gated' ? 'Synchronized Angiogram Viewport' : 'Analysis Results'}
-                </h2>
-                <p className="step-subtitle">
-                  {pipelineMode === 'ecg_gated' 
-                    ? `Virtual trigger synchronized at Frame #${gatedFrame} (${gatingTriggerData?.cardiac_phase || 70}% Phase)` 
-                    : 'AI has analyzed the angiogram and highlighted key findings.'}
-                </p>
+        {/* Card 2: Coronary Cine Video Upload */}
+        <div className="angio-card input-card">
+          <div className="card-top-header">
+            <div className="card-icon-badge">
+              <Film size={20} />
+            </div>
+            <div>
+              <h2 className="card-section-title">2. Upload Coronary Cine Video</h2>
+              <p className="card-section-subtitle">Angiography cine stream (.mp4, .avi, .mov, .dcm)</p>
+            </div>
+          </div>
+
+          {/* Video Dropzone */}
+          <label
+            className={`file-dropzone ${isDraggingVideo ? 'dragging' : ''}`}
+            onDragOver={(e) => { e.preventDefault(); setIsDraggingVideo(true); }}
+            onDragLeave={() => setIsDraggingVideo(false)}
+            onDrop={(e) => {
+              e.preventDefault();
+              setIsDraggingVideo(false);
+              if (e.dataTransfer.files?.[0]) handleVideoFile(e.dataTransfer.files[0]);
+            }}
+          >
+            <input
+              type="file"
+              accept=".mp4,.avi,.mov,.webm,.dcm"
+              className="hidden-file-input"
+              onChange={(e) => {
+                if (e.target.files?.[0]) handleVideoFile(e.target.files[0]);
+              }}
+            />
+            <div className="upload-icon-circle">
+              <Film size={24} />
+            </div>
+            <p className="drop-main-text">Drag & drop angiography cine video</p>
+            <span className="drop-or-text">or click to browse (.mp4, .dcm)</span>
+          </label>
+
+          {/* Active Video File Status / Preloaded Switch */}
+          <div className="file-selection-status-box">
+            {useSampleVideo ? (
+              <div className="selected-file-row sample-active">
+                <div className="file-meta">
+                  <CheckCircle2 size={18} className="success-icon" />
+                  <span className="file-name">sample_cine.mp4 (Preloaded 30 FPS Stream)</span>
+                </div>
+                <button
+                  type="button"
+                  className="switch-file-btn"
+                  onClick={() => {
+                    setUseSampleVideo(false);
+                    setVideoFile(null);
+                  }}
+                  title="Upload your own video"
+                >
+                  Upload custom
+                </button>
               </div>
+            ) : videoFile ? (
+              <div className="selected-file-row">
+                <div className="file-meta">
+                  <CheckCircle2 size={18} className="success-icon" />
+                  <span className="file-name">{videoFile.name} ({(videoFile.size / (1024 * 1024)).toFixed(1)} MB)</span>
+                </div>
+                <button
+                  type="button"
+                  className="remove-btn"
+                  onClick={() => setVideoFile(null)}
+                  title="Remove video"
+                >
+                  <X size={15} />
+                </button>
+              </div>
+            ) : (
+              <div className="no-file-row">
+                <span className="no-file-text">No custom video selected</span>
+                <button
+                  type="button"
+                  className="use-sample-btn"
+                  onClick={() => setUseSampleVideo(true)}
+                >
+                  Use Preloaded sample_cine.mp4
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Card 3: Patient & Procedure Details */}
+        <div className="angio-card input-card full-width-card">
+          <div className="card-top-header">
+            <div className="card-icon-badge">
+              <FileText size={20} />
+            </div>
+            <div>
+              <h2 className="card-section-title">3. Patient & Procedure Details</h2>
+              <p className="card-section-subtitle">Clinical identification for cardiac timing correlation</p>
+            </div>
+          </div>
+
+          <div className="patient-inputs-row">
+            <div className="input-group">
+              <label className="input-label">Patient ID</label>
+              <input
+                type="text"
+                className="text-input"
+                value={patientId}
+                onChange={(e) => setPatientId(e.target.value)}
+                placeholder="e.g. PAT-00123"
+                required
+              />
             </div>
 
-            <button 
-              className="btn-outline-burgundy download-report-btn"
-              onClick={() => onNavigate('/reports')}
+            <div className="input-group">
+              <label className="input-label">Age</label>
+              <input
+                type="number"
+                className="text-input"
+                value={age}
+                onChange={(e) => setAge(e.target.value)}
+                placeholder="e.g. 56"
+                min="1"
+                max="120"
+                required
+              />
+            </div>
+
+            <div className="input-group">
+              <label className="input-label">Gender</label>
+              <select
+                className="select-input"
+                value={gender}
+                onChange={(e) => setGender(e.target.value)}
+              >
+                <option value="Male">Male</option>
+                <option value="Female">Female</option>
+                <option value="Other">Other</option>
+              </select>
+            </div>
+
+            <div className="input-group input-group-notes">
+              <label className="input-label">Clinical Notes</label>
+              <input
+                type="text"
+                className="text-input"
+                value={notes}
+                onChange={(e) => setNotes(e.target.value)}
+                placeholder="e.g. Angina, suspected LAD stenosis"
+              />
+            </div>
+          </div>
+        </div>
+
+        {/* Error message banner if processing failed */}
+        {processingError && (
+          <div className="processing-error-banner">
+            <AlertCircle size={20} className="error-icon" />
+            <div className="error-text-content">
+              <strong>Processing Failed:</strong> {processingError}
+            </div>
+            <button
+              type="button"
+              className="retry-btn"
+              onClick={handleStartProcessing}
             >
-              <Download size={15} />
-              <span>Download Report</span>
+              <RefreshCw size={14} />
+              <span>Retry</span>
             </button>
           </div>
+        )}
 
-          {/* Angiogram Viewport and Metrics */}
-          <AngiogramViewer 
-            onOpenFullReport={() => onNavigate('/results')}
-            selectedFrame={gatedFrame}
-            virtualTrigger={gatingTriggerData}
-            isGatedMode={pipelineMode === 'ecg_gated'}
-            videoSrc={videoSrc}
-            onPlaybackUpdate={(t) => setCurrentPlaybackTime(t)}
-            totalFrames={120}
-            fps={30}
-          />
+        {/* Start Analysis CTA Button */}
+        <div className="cta-container">
+          <button
+            type="submit"
+            className="btn-burgundy start-processing-btn"
+            disabled={isProcessing}
+          >
+            {isProcessing ? (
+              <>
+                <Loader2 size={18} className="spinner-icon" />
+                <span>Processing ECG & Video...</span>
+              </>
+            ) : (
+              <>
+                <Play size={18} fill="currentColor" />
+                <span>Start ECG-Gated Analysis →</span>
+              </>
+            )}
+          </button>
+          <p className="cta-caption">
+            Runs integrated CardioAI R-peak detection model, computes exact timestamps, and captures synchronized video frames.
+          </p>
+        </div>
+      </form>
 
-          {/* Bottom Area: AI Findings (Left) & AI Analysis Confidence (Right) */}
-          <div className="findings-and-confidence-row">
-            {/* AI Findings */}
-            <div className="ai-findings-section">
-              <div className="findings-header">
-                <FileText size={17} className="findings-icon" />
-                <h3 className="findings-title">AI Findings</h3>
-              </div>
-              <ul className="findings-list">
-                {pipelineMode === 'ecg_gated' && (
-                  <li className="gated-highlight-item">
-                    <strong>Motion-Gated Acquisition:</strong> Trigger generated at {gatingTriggerData?.cardiac_phase || 70}% cardiac phase (Frame #{gatedFrame}).
-                  </li>
+      {/* Step-by-Step Processing Modal Overlay */}
+      {isProcessing && (
+        <div className="processing-modal-overlay">
+          <div className="processing-modal-card">
+            <div className="modal-header-icon">
+              <Activity size={32} className="modal-pulse-icon" />
+            </div>
+
+            <h3 className="modal-title">Processing ECG and Video...</h3>
+            <p className="modal-subtitle">
+              Running integrated CardioAI 1D CNN model and frame-accurate timing synchronization.
+            </p>
+
+            {/* Checklist of exact states requested */}
+            <div className="processing-steps-list">
+              {/* Step 1: Upload completed */}
+              <div className={`step-item ${processingStep >= 1 ? 'completed' : 'pending'}`}>
+                {processingStep >= 1 ? (
+                  <CheckCircle2 size={18} className="step-check" />
+                ) : (
+                  <span className="step-bullet">•</span>
                 )}
-                <li>Narrowing detected in proximal segment of LAD.</li>
-                <li>Estimated severity: <strong>68%</strong>.</li>
-                <li>Vessel structure highlighted.</li>
-                <li>High confidence in detection ({pipelineMode === 'ecg_gated' ? '98% R-peak confidence' : '92%'}).</li>
-                <li>Recommend clinical correlation.</li>
-              </ul>
+                <span className="step-label">Upload completed</span>
+              </div>
+
+              {/* Step 2: ECG loaded */}
+              <div className={`step-item ${processingStep >= 2 ? 'completed' : (processingStep === 1 ? 'active' : 'pending')}`}>
+                {processingStep >= 2 ? (
+                  <CheckCircle2 size={18} className="step-check" />
+                ) : processingStep === 1 ? (
+                  <Loader2 size={18} className="step-spinner" />
+                ) : (
+                  <span className="step-bullet">•</span>
+                )}
+                <span className="step-label">ECG loaded & calibrated</span>
+              </div>
+
+              {/* Step 3: Detecting R-peaks */}
+              <div className={`step-item ${processingStep >= 3 ? (processingStep > 3 ? 'completed' : 'active') : 'pending'}`}>
+                {processingStep > 3 ? (
+                  <CheckCircle2 size={18} className="step-check" />
+                ) : processingStep === 3 ? (
+                  <Loader2 size={18} className="step-spinner" />
+                ) : (
+                  <span className="step-bullet">⏳</span>
+                )}
+                <span className="step-label">Detecting R-peaks with CardioAI model...</span>
+              </div>
+
+              {/* Step 4: Matching R-peaks with video frames */}
+              <div className={`step-item ${processingStep >= 4 ? (processingStep > 4 ? 'completed' : 'active') : 'pending'}`}>
+                {processingStep > 4 ? (
+                  <CheckCircle2 size={18} className="step-check" />
+                ) : processingStep === 4 ? (
+                  <Loader2 size={18} className="step-spinner" />
+                ) : (
+                  <span className="step-bullet">⏳</span>
+                )}
+                <span className="step-label">Matching R-peaks with video frames...</span>
+              </div>
+
+              {/* Step 5: Capturing synchronized images */}
+              <div className={`step-item ${processingStep >= 5 ? (processingStep >= 6 ? 'completed' : 'active') : 'pending'}`}>
+                {processingStep >= 6 ? (
+                  <CheckCircle2 size={18} className="step-check" />
+                ) : processingStep === 5 ? (
+                  <Loader2 size={18} className="step-spinner" />
+                ) : (
+                  <span className="step-bullet">⏳</span>
+                )}
+                <span className="step-label">Capturing synchronized images...</span>
+              </div>
             </div>
 
-            {/* AI Analysis Confidence Card */}
-            <div className="confidence-summary-card">
-              <div className="conf-icon-wrapper">
-                <BarChart2 size={20} />
+            {/* Step 6: Completion message */}
+            {processingStep >= 6 && (
+              <div className="processing-completed-badge">
+                <CheckCircle2 size={16} />
+                <span>Processing completed! Preparing Results Page...</span>
               </div>
-              <h4 className="conf-title">AI Analysis Confidence</h4>
-              <p className="conf-desc">
-                {pipelineMode === 'ecg_gated'
-                  ? 'Motion blur minimized via virtual cardiac cycle synchronization.'
-                  : 'High accuracy in vessel detection and narrowing assessment.'}
-              </p>
-              <button 
-                className="btn-burgundy view-detailed-report-btn"
-                onClick={() => onNavigate('/results')}
-              >
-                <span>View Detailed Report</span>
-                <span>→</span>
-              </button>
-            </div>
+            )}
           </div>
         </div>
-      </div>
+      )}
 
       <style>{`
-        .upload-page-container {
+        .upload-page-clean-container {
           display: flex;
           flex-direction: column;
-          gap: 20px;
+          gap: 22px;
           animation: fadeIn 0.3s ease-out;
         }
 
-        .upload-page-header {
-          display: flex;
-          align-items: center;
-          justify-content: space-between;
-          padding: 0 4px 4px 4px;
+        .upload-inputs-grid {
+          display: grid;
+          grid-template-columns: 1fr 1fr;
+          gap: 20px;
         }
 
-        .header-titles {
+        .input-card {
+          padding: 22px 24px;
           display: flex;
           flex-direction: column;
+          gap: 16px;
         }
 
-        .page-title {
-          font-size: 28px;
-          font-weight: 800;
-          color: var(--text-main);
-          letter-spacing: -0.6px;
-          line-height: 1.2;
+        .full-width-card {
+          grid-column: 1 / -1;
         }
 
-        .page-subtitle {
-          font-size: 13.5px;
-          color: var(--text-secondary);
-          margin-top: 4px;
-          font-weight: 500;
-        }
-
-        .header-decorative-right {
+        .card-top-header {
           display: flex;
           align-items: center;
-          gap: 14px;
+          gap: 12px;
         }
 
-        .header-ecg-svg {
-          width: 110px;
-          height: 32px;
-        }
-
-        .header-quote-script {
-          font-family: var(--font-script);
-          font-size: 23px;
-          font-weight: 700;
+        .card-icon-badge {
+          width: 40px;
+          height: 40px;
+          border-radius: var(--radius-sm);
+          background-color: var(--pink-surface);
           color: var(--burgundy-primary);
-          white-space: nowrap;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          flex-shrink: 0;
         }
 
-        .header-heart-thumb {
-          width: 48px;
-          height: 48px;
-          opacity: 0.85;
+        .card-section-title {
+          font-size: 16px;
+          font-weight: 700;
+          color: var(--text-main);
+          margin-bottom: 2px;
         }
 
-        .header-heart-thumb img {
-          width: 100%;
-          height: 100%;
-          object-fit: contain;
-          mix-blend-mode: multiply;
+        .card-section-subtitle {
+          font-size: 12.5px;
+          color: var(--text-muted);
         }
 
-        /* Mode Selector Strip */
-        .pipeline-mode-selector-strip {
+        .file-dropzone {
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          justify-content: center;
+          border: 2px dashed var(--burgundy-border);
+          border-radius: var(--radius-md);
+          background-color: #FFF9FA;
+          padding: 30px 20px;
+          cursor: pointer;
+          transition: all 0.2s ease;
+          position: relative;
+        }
+
+        .file-dropzone:hover,
+        .file-dropzone.dragging {
+          border-color: var(--burgundy-primary);
+          background-color: #FFF0F4;
+        }
+
+        .hidden-file-input {
+          position: absolute;
+          width: 0;
+          height: 0;
+          opacity: 0;
+          pointer-events: none;
+        }
+
+        .upload-icon-circle {
+          width: 50px;
+          height: 50px;
+          border-radius: 50%;
+          background: #FFFFFF;
+          color: var(--burgundy-primary);
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          box-shadow: var(--shadow-sm);
+          margin-bottom: 10px;
+          border: 1px solid var(--burgundy-border);
+        }
+
+        .drop-main-text {
+          font-size: 14px;
+          font-weight: 600;
+          color: var(--text-main);
+          margin-bottom: 3px;
+        }
+
+        .drop-or-text {
+          font-size: 12px;
+          color: var(--text-muted);
+        }
+
+        .file-selection-status-box {
+          background: #FDFDFE;
+          border: 1px solid #EBE4E7;
+          border-radius: var(--radius-sm);
+          padding: 10px 14px;
+        }
+
+        .selected-file-row {
           display: flex;
           align-items: center;
           justify-content: space-between;
-          flex-wrap: wrap;
-          gap: 12px;
-          background: #FFFFFF;
-          border: 1px solid var(--burgundy-border);
-          border-radius: var(--radius-md);
-          padding: 8px 14px;
+          font-size: 13px;
         }
 
-        .mode-toggle-group {
+        .selected-file-row.sample-active {
+          color: var(--burgundy-primary);
+        }
+
+        .file-meta {
           display: flex;
           align-items: center;
           gap: 8px;
         }
 
-        .mode-btn {
-          display: inline-flex;
-          align-items: center;
-          gap: 7px;
-          padding: 8px 14px;
-          border-radius: 6px;
-          font-size: 12.5px;
+        .file-name {
           font-weight: 600;
-          border: 1px solid transparent;
-          background: #F8FAFC;
-          color: var(--text-secondary);
+        }
+
+        .success-icon {
+          color: #10B981;
+          flex-shrink: 0;
+        }
+
+        .switch-file-btn {
+          background: transparent;
+          border: none;
+          color: var(--burgundy-primary);
+          font-size: 12px;
+          font-weight: 600;
+          cursor: pointer;
+          text-decoration: underline;
+        }
+
+        .remove-btn {
+          background: transparent;
+          border: none;
+          color: var(--text-muted);
+          cursor: pointer;
+          display: flex;
+          align-items: center;
+          padding: 4px;
+        }
+
+        .remove-btn:hover {
+          color: #EF4444;
+        }
+
+        .no-file-row {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          font-size: 12.5px;
+        }
+
+        .no-file-text {
+          color: var(--text-muted);
+        }
+
+        .use-sample-btn {
+          background: #FFF2F5;
+          border: 1px solid var(--burgundy-border);
+          color: var(--burgundy-primary);
+          border-radius: var(--radius-sm);
+          padding: 4px 10px;
+          font-size: 12px;
+          font-weight: 600;
           cursor: pointer;
           transition: all 0.2s ease;
         }
 
-        .mode-btn:hover {
-          background: #FFF2F5;
-          color: var(--burgundy-primary);
-        }
-
-        .mode-btn.active {
+        .use-sample-btn:hover {
           background: var(--burgundy-primary);
           color: #FFFFFF;
-          border-color: var(--burgundy-primary);
-          box-shadow: 0 2px 8px rgba(133, 16, 54, 0.2);
         }
 
-        .mode-badge-pill {
-          background: rgba(255, 255, 255, 0.25);
-          color: #FFFFFF;
-          font-size: 10px;
-          font-weight: 700;
-          padding: 2px 6px;
-          border-radius: 10px;
-          text-transform: uppercase;
-          letter-spacing: 0.3px;
-        }
-
-        .mode-btn:not(.active) .mode-badge-pill {
-          background: #FCE7EB;
-          color: var(--burgundy-primary);
-        }
-
-        .mode-info-tag {
-          font-size: 11.5px;
-          color: var(--text-secondary);
-        }
-
-        .mode-info-tag strong {
-          color: var(--burgundy-primary);
-        }
-
-        /* 2-Column Grid Layout */
-        .upload-grid-layout {
+        .patient-inputs-row {
           display: grid;
-          grid-template-columns: 430px 1fr;
-          gap: 24px;
-          align-items: start;
-        }
-
-        .upload-step-card, .results-step-card {
-          padding: 24px;
-          display: flex;
-          flex-direction: column;
+          grid-template-columns: 1fr 0.8fr 1fr 2fr;
           gap: 16px;
         }
 
-        .step-header {
+        @media (max-width: 900px) {
+          .upload-inputs-grid {
+            grid-template-columns: 1fr;
+          }
+          .patient-inputs-row {
+            grid-template-columns: 1fr 1fr;
+          }
+        }
+
+        .input-group {
+          display: flex;
+          flex-direction: column;
+          gap: 6px;
+        }
+
+        .input-label {
+          font-size: 12.5px;
+          font-weight: 600;
+          color: var(--text-muted);
+        }
+
+        .text-input,
+        .select-input {
+          padding: 9px 12px;
+          border: 1px solid var(--burgundy-border);
+          border-radius: var(--radius-sm);
+          font-size: 13.5px;
+          color: var(--text-main);
+          background: #FFFFFF;
+          font-family: inherit;
+        }
+
+        .text-input:focus,
+        .select-input:focus {
+          outline: none;
+          border-color: var(--burgundy-primary);
+          box-shadow: 0 0 0 2px rgba(133, 16, 54, 0.15);
+        }
+
+        .processing-error-banner {
+          grid-column: 1 / -1;
           display: flex;
           align-items: center;
           gap: 12px;
+          background: #FEF2F2;
+          border: 1px solid #FCA5A5;
+          color: #991B1B;
+          border-radius: var(--radius-sm);
+          padding: 12px 18px;
         }
 
-        .step-header-with-action {
-          display: flex;
+        .error-text-content {
+          flex: 1;
+          font-size: 13.5px;
+        }
+
+        .retry-btn {
+          display: inline-flex;
           align-items: center;
-          justify-content: space-between;
+          gap: 6px;
+          background: #DC2626;
+          color: #FFFFFF;
+          border: none;
+          border-radius: var(--radius-sm);
+          padding: 6px 12px;
+          font-size: 12.5px;
+          font-weight: 600;
+          cursor: pointer;
         }
 
-        .step-badge {
-          width: 28px;
-          height: 28px;
-          border-radius: 50%;
-          background-color: var(--burgundy-primary);
-          color: #FFFFFF;
+        .cta-container {
+          grid-column: 1 / -1;
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          gap: 8px;
+          margin-top: 10px;
+        }
+
+        .start-processing-btn {
+          width: 100%;
+          max-width: 420px;
+          padding: 14px 28px;
+          font-size: 16px;
+          font-weight: 700;
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          gap: 10px;
+          box-shadow: 0 4px 14px rgba(133, 16, 54, 0.25);
+          cursor: pointer;
+        }
+
+        .start-processing-btn:disabled {
+          opacity: 0.7;
+          cursor: not-allowed;
+        }
+
+        .cta-caption {
+          font-size: 12.5px;
+          color: var(--text-muted);
+          text-align: center;
+        }
+
+        .spinner-icon {
+          animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+          from { transform: rotate(0deg); }
+          to { transform: rotate(360deg); }
+        }
+
+        /* Modal Overlay for Step-by-Step Processing */
+        .processing-modal-overlay {
+          position: fixed;
+          inset: 0;
+          background: rgba(15, 23, 42, 0.65);
+          backdrop-filter: blur(4px);
           display: flex;
           align-items: center;
           justify-content: center;
-          font-size: 14px;
-          font-weight: 700;
-          flex-shrink: 0;
+          z-index: 9999;
+          animation: fadeIn 0.2s ease-out;
         }
 
-        .step-title-group {
+        .processing-modal-card {
+          background: #FFFFFF;
+          border-radius: var(--radius-lg);
+          padding: 36px 32px;
+          width: 90%;
+          max-width: 480px;
+          box-shadow: 0 20px 40px rgba(0, 0, 0, 0.2);
           display: flex;
           flex-direction: column;
+          align-items: center;
+          text-align: center;
         }
 
-        .step-title {
-          font-size: 16.5px;
-          font-weight: 700;
-          color: var(--text-main);
-          letter-spacing: -0.2px;
-        }
-
-        .step-subtitle {
-          font-size: 11.5px;
-          color: var(--text-muted);
-          font-weight: 500;
-        }
-
-        .download-report-btn {
-          padding: 6px 14px;
-          font-size: 12.5px;
-        }
-
-        /* Findings & Confidence Row */
-        .findings-and-confidence-row {
-          display: grid;
-          grid-template-columns: 1fr 260px;
-          gap: 16px;
-          margin-top: 4px;
-        }
-
-        .ai-findings-section {
-          background-color: #FAFAFB;
-          border: 1px solid var(--burgundy-border);
-          border-radius: var(--radius-md);
-          padding: 14px 18px;
-        }
-
-        .findings-header {
+        .modal-header-icon {
+          width: 64px;
+          height: 64px;
+          border-radius: 50%;
+          background: #FFF0F4;
+          color: var(--burgundy-primary);
           display: flex;
           align-items: center;
-          gap: 8px;
-          margin-bottom: 10px;
+          justify-content: center;
+          margin-bottom: 16px;
         }
 
-        .findings-icon {
-          color: var(--burgundy-primary);
+        .modal-pulse-icon {
+          animation: pulseIcon 1.2s infinite ease-in-out;
         }
 
-        .findings-title {
-          font-size: 14.5px;
+        .modal-title {
+          font-size: 19px;
           font-weight: 700;
           color: var(--text-main);
+          margin-bottom: 6px;
         }
 
-        .findings-list {
-          padding-left: 20px;
-          display: flex;
-          flex-direction: column;
-          gap: 6px;
-          font-size: 12.5px;
-          color: var(--text-secondary);
+        .modal-subtitle {
+          font-size: 13px;
+          color: var(--text-muted);
+          margin-bottom: 24px;
+          line-height: 1.4;
         }
 
-        .findings-list li {
-          line-height: 1.35;
-        }
-
-        .gated-highlight-item {
-          color: var(--burgundy-primary) !important;
-          font-weight: 600;
-        }
-
-        .confidence-summary-card {
-          background-color: #FDECEF;
+        .processing-steps-list {
+          width: 100%;
+          background: #FFF9FA;
           border: 1px solid var(--burgundy-border);
           border-radius: var(--radius-md);
-          padding: 14px 16px;
+          padding: 16px 20px;
           display: flex;
           flex-direction: column;
-          gap: 6px;
+          gap: 12px;
+          text-align: left;
         }
 
-        .conf-icon-wrapper {
-          color: var(--burgundy-primary);
-        }
-
-        .conf-title {
-          font-size: 14px;
-          font-weight: 700;
-          color: var(--burgundy-primary);
-        }
-
-        .conf-desc {
-          font-size: 11.5px;
-          color: var(--text-secondary);
-          line-height: 1.35;
-        }
-
-        .view-detailed-report-btn {
-          margin-top: 6px;
-          width: 100%;
-          padding: 8px 12px;
-          font-size: 12.5px;
-          border-radius: 6px;
+        .step-item {
           display: flex;
-          justify-content: space-between;
-          background-color: var(--burgundy-primary) !important;
-          color: #FFFFFF !important;
-          opacity: 1 !important;
-          visibility: visible !important;
+          align-items: center;
+          gap: 10px;
+          font-size: 13.5px;
+          color: var(--text-muted);
           transition: all 0.2s ease;
         }
 
-        .view-detailed-report-btn:hover {
-          background-color: #6D0B2B !important;
-          color: #FFFFFF !important;
-          opacity: 1 !important;
-          visibility: visible !important;
+        .step-item.active {
+          color: var(--burgundy-primary);
+          font-weight: 600;
         }
 
-        @media (max-width: 1200px) {
-          .upload-grid-layout {
-            grid-template-columns: 1fr;
-          }
-          .findings-and-confidence-row {
-            grid-template-columns: 1fr;
-          }
+        .step-item.completed {
+          color: #065F46;
+          font-weight: 600;
+        }
+
+        .step-check {
+          color: #10B981;
+          flex-shrink: 0;
+        }
+
+        .step-spinner {
+          color: var(--burgundy-primary);
+          animation: spin 1s linear infinite;
+          flex-shrink: 0;
+        }
+
+        .step-bullet {
+          width: 18px;
+          text-align: center;
+          font-size: 12px;
+          flex-shrink: 0;
+        }
+
+        .processing-completed-badge {
+          margin-top: 18px;
+          display: inline-flex;
+          align-items: center;
+          gap: 8px;
+          background: #ECFDF5;
+          color: #065F46;
+          border: 1px solid #A7F3D0;
+          border-radius: var(--radius-pill);
+          padding: 6px 16px;
+          font-size: 13px;
+          font-weight: 600;
+          animation: fadeIn 0.3s ease-out;
         }
       `}</style>
     </div>

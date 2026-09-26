@@ -5,19 +5,20 @@ const API_BASE = '/api';
 
 async function request(endpoint, options = {}) {
   const url = `${API_BASE}${endpoint}`;
+  const isFormData = options.body instanceof FormData;
   const config = {
+    ...options,
     headers: {
-      'Content-Type': 'application/json',
+      ...(isFormData ? {} : { 'Content-Type': 'application/json' }),
       ...options.headers,
     },
-    ...options,
   };
 
   try {
     const res = await fetch(url, config);
     const data = await res.json().catch(() => ({}));
     if (!res.ok) {
-      throw new Error(data.message || `Request failed with status ${res.status}`);
+      throw new Error(data.error || data.message || `Request failed with status ${res.status}`);
     }
     return data;
   } catch (err) {
@@ -27,7 +28,7 @@ async function request(endpoint, options = {}) {
       const fallbackRes = await fetch(fallbackUrl, config);
       const fallbackData = await fallbackRes.json().catch(() => ({}));
       if (!fallbackRes.ok) {
-        throw new Error(fallbackData.message || `Request failed with status ${fallbackRes.status}`);
+        throw new Error(fallbackData.error || fallbackData.message || `Request failed with status ${fallbackRes.status}`);
       }
       return fallbackData;
     } catch (fallbackErr) {
@@ -423,6 +424,36 @@ export const api = {
 
   getCapturedImages: (sessionId = null) =>
     request(sessionId ? `/ecg/sessions/${sessionId}/images` : '/ecg/images'),
+
+  // Synchronized ECG R-Peak Model & Video Processing (CardioAI Model)
+  processECGVideo: (formData) =>
+    request('/process-ecg', {
+      method: 'POST',
+      body: formData,
+    }),
+
+  // Memory/Local Storage for active ECG-gating results
+  setLatestECGResult: (data) => {
+    try {
+      if (data) {
+        localStorage.setItem('angiolens_latest_ecg_result', JSON.stringify(data));
+      } else {
+        localStorage.removeItem('angiolens_latest_ecg_result');
+      }
+    } catch {}
+    cacheStore.latestECGResult = data;
+  },
+
+  getLatestECGResult: () => {
+    if (cacheStore.latestECGResult) return cacheStore.latestECGResult;
+    try {
+      const saved = localStorage.getItem('angiolens_latest_ecg_result');
+      return saved ? JSON.parse(saved) : null;
+    } catch {
+      return null;
+    }
+  },
 };
 
 export default api;
+
